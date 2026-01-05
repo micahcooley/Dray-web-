@@ -1,1 +1,4 @@
 # Dray
+Dray Web is where you go when you have a melody in your head but do not want to open a full project yet. It is built as a fast entry point for the rest of the Dray system. You can type a prompt into the sidebar to get MIDI patterns and synth sounds instantly.
+Every idea you generate on the web version is ready to download. You can take those files into your current setup or save them to your profile to open later in the desktop tracking station. The public gallery lets you see what other producers are making so you can find new starting points or share your own progress.
+This version is completely free because it is meant to be the first step in your workflow. It is the sketchpad you use before you move to the desktop app to record vocals and finish the track. It stays out of your way and focuses on getting the core idea down as quickly as possible.
