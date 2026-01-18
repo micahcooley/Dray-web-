@@ -1,7 +1,7 @@
 import { audioEngine } from './audioEngine';
 import { useProjectStore } from '../store/useProjectStore';
 import { updatePlaybackTime } from '../hooks/usePlaybackTime';
-import { LOOKAHEAD_TIME, BEATS_VISIBLE, getEngineForInstrument } from './constants';
+import { LOOKAHEAD_TIME, BEATS_VISIBLE, PRELOAD_TIMEOUT_MS, getEngineForInstrument } from './constants';
 import type { MidiNote, Track, Clip } from './types';
 
 export class AudioScheduler {
@@ -9,6 +9,7 @@ export class AudioScheduler {
     private instrumentCache = new Map<number, string>();
     private nextNoteTime = 0;
     private timerID: ReturnType<typeof setInterval> | null = null;
+    private isSchedulerRunning = false;
     private current16thNote = 0;
     private startTime = 0;
     private startOffset = 0;
@@ -16,6 +17,7 @@ export class AudioScheduler {
     // Cache for audio buffers and pending loads
     private audioBufferCache = new Map<string, AudioBuffer>();
     private pendingLoads = new Set<string>();
+    private pendingLoadResolvers = new Map<string, Array<() => void>>();
 
     // Pending playback requests for unbuffered samples
     private pendingPlaybackRequests = new Map<string, Array<{
@@ -67,7 +69,7 @@ export class AudioScheduler {
     }
 
     public async start() {
-        if (this.timerID) return;
+        if (this.isSchedulerRunning) return;
 
         try {
             await audioEngine.initialize();
@@ -143,9 +145,7 @@ export class AudioScheduler {
 
                 console.log("AudioScheduler: Using AudioWorklet as master clock");
                 this.workletReady = true;
-
-                // Set a dummy timerID to indicate running state (not actually used for scheduling)
-                this.timerID = 1 as any;
+                this.isSchedulerRunning = true;
             }
         } catch (e) {
             console.warn('Worklet registration failed, falling back to RAF', e);
@@ -154,7 +154,7 @@ export class AudioScheduler {
         // 2. If worklet not available, use RAF-based lookahead loop (NOT setInterval)
         if (!this.workletReady) {
             console.log('AudioScheduler: Using RAF-based fallback scheduler');
-            this.timerID = 1 as any; // Mark as running
+            this.isSchedulerRunning = true;
             this.rafSchedulerLoop();
         }
 
@@ -192,7 +192,7 @@ export class AudioScheduler {
 
     // RAF-based fallback scheduler (used when worklet not available)
     private rafSchedulerLoop() {
-        if (!this.timerID) return;
+        if (!this.isSchedulerRunning) return;
 
         try {
             const now = audioEngine.getNow();
@@ -263,7 +263,7 @@ export class AudioScheduler {
             // Check for missed ticks
             if (this.lastTickTime > 0) {
                 const expectedTickDiff = 1;
-                const actualTickDiff = tickIndex - Math.floor(this.lastTickTime);
+                const actualTickDiff = tickIndex - this.lastTickTime;
                 if (actualTickDiff > expectedTickDiff + 1) {
                     this.missedTicks += actualTickDiff - expectedTickDiff;
                 }
@@ -278,11 +278,13 @@ export class AudioScheduler {
     public async preloadAudioClip(url: string): Promise<void> {
         if (this.audioBufferCache.has(url)) return;
         if (this.pendingLoads.has(url)) {
-            // Wait for pending load to complete
-            while (this.pendingLoads.has(url)) {
-                await new Promise(resolve => setTimeout(resolve, 10));
-            }
-            return;
+            // Wait for pending load to complete using Promise
+            return new Promise<void>((resolve) => {
+                if (!this.pendingLoadResolvers.has(url)) {
+                    this.pendingLoadResolvers.set(url, []);
+                }
+                this.pendingLoadResolvers.get(url)!.push(resolve);
+            });
         }
 
         this.pendingLoads.add(url);
@@ -304,8 +306,21 @@ export class AudioScheduler {
                     this.triggerAudio(url, playTime, req.volume, req.pan, req.semitones, req.trackId);
                 }
             }
+
+            // Resolve all pending load promises
+            if (this.pendingLoadResolvers.has(url)) {
+                const resolvers = this.pendingLoadResolvers.get(url)!;
+                this.pendingLoadResolvers.delete(url);
+                resolvers.forEach(resolve => resolve());
+            }
         } catch (e) {
             console.error('Failed to load audio clip:', url, e);
+            // Reject pending promises
+            if (this.pendingLoadResolvers.has(url)) {
+                const resolvers = this.pendingLoadResolvers.get(url)!;
+                this.pendingLoadResolvers.delete(url);
+                resolvers.forEach(resolve => resolve()); // Resolve even on error to unblock
+            }
         } finally {
             this.pendingLoads.delete(url);
         }
@@ -324,7 +339,7 @@ export class AudioScheduler {
         try {
             await Promise.race([
                 Promise.all(promises),
-                new Promise((_, reject) => setTimeout(() => reject(new Error('Preload timeout')), 5000))
+                new Promise((_, reject) => setTimeout(() => reject(new Error('Preload timeout')), PRELOAD_TIMEOUT_MS))
             ]);
         } catch (e) {
             console.warn('Some clips did not preload in time:', e);
@@ -340,7 +355,8 @@ export class AudioScheduler {
     }
 
     public async stop() {
-        // Clear timer/RAF loop
+        // Clear running state
+        this.isSchedulerRunning = false;
         this.timerID = null;
 
         // Stop Worklet
@@ -388,7 +404,7 @@ export class AudioScheduler {
     }
 
     public isRunning(): boolean {
-        return this.timerID !== null;
+        return this.isSchedulerRunning;
     }
 
     // Scoped / Advance / Loop logic
@@ -606,7 +622,7 @@ export class AudioScheduler {
 
 
     private visualLoop() {
-        if (!this.timerID) return;
+        if (!this.isSchedulerRunning) return;
 
         const now = audioEngine.getNow();
         const songTime = now - this.startTime;

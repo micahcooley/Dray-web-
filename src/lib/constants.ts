@@ -20,6 +20,7 @@ export const SAMPLE_RATE = 44100;
 export const LOOKAHEAD_TIME = 0.1; // seconds
 export const SCHEDULER_INTERVAL = 25; // milliseconds
 export const NOTE_TOLERANCE = 0.001; // beats (more precise than 0.01)
+export const PRELOAD_TIMEOUT_MS = 5000; // Maximum time to wait for audio clips to preload
 
 // ============================================
 // POLYPHONY & VOICE POOLING
