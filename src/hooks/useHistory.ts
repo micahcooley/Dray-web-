@@ -28,7 +28,7 @@ export function useHistory<T>(initialState: T): UseHistoryReturn<T> {
         future: []
     });
 
-    const lastActionRef = useRef<string | null>(null);
+    const [lastAction, setLastAction] = useState<string | null>(null);
 
     const setState = useCallback((newState: T | ((prev: T) => T), actionName?: string) => {
         setHistory(prev => {
@@ -41,7 +41,7 @@ export function useHistory<T>(initialState: T): UseHistoryReturn<T> {
                 return prev;
             }
 
-            lastActionRef.current = actionName || 'Change';
+            setLastAction(actionName || 'Change');
 
             return {
                 past: [...prev.past, prev.present].slice(-MAX_HISTORY),
@@ -58,7 +58,7 @@ export function useHistory<T>(initialState: T): UseHistoryReturn<T> {
             const newPast = [...prev.past];
             const previousState = newPast.pop()!;
 
-            lastActionRef.current = 'Undo';
+            setLastAction('Undo');
 
             return {
                 past: newPast,
@@ -75,7 +75,7 @@ export function useHistory<T>(initialState: T): UseHistoryReturn<T> {
             const newFuture = [...prev.future];
             const nextState = newFuture.shift()!;
 
-            lastActionRef.current = 'Redo';
+            setLastAction('Redo');
 
             return {
                 past: [...prev.past, prev.present].slice(-MAX_HISTORY),
@@ -92,7 +92,7 @@ export function useHistory<T>(initialState: T): UseHistoryReturn<T> {
         redo,
         canUndo: history.past.length > 0,
         canRedo: history.future.length > 0,
-        lastAction: lastActionRef.current,
+        lastAction,
         historyLength: history.past.length
     };
 }

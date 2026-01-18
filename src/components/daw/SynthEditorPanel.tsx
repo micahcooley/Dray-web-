@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { SynthPreset, OscillatorType, updatePreset, addPreset, findPreset } from '../../lib/presets/synthPresets';
 import { toneSynthEngine } from '../../lib/engines/synth';
 import { audioEngine } from '../../lib/audioEngine';
@@ -9,16 +9,22 @@ interface SynthEditorPanelProps {
 }
 
 export default function SynthEditorPanel({ presetName, onPresetChange }: SynthEditorPanelProps) {
-  const [preset, setPreset] = useState<SynthPreset | null>(null);
+  // Derive preset from presetName instead of using state
+  const basePreset = useMemo(() => {
+    const found = findPreset(presetName);
+    return found ? { ...found } : null;
+  }, [presetName]);
+
+  const [preset, setPreset] = useState<SynthPreset | null>(basePreset);
   const [previewNote, setPreviewNote] = useState<number>(60);
   const [status, setStatus] = useState<string | null>(null);
   const saveTimer = useRef<NodeJS.Timeout | null>(null);
   const debouncedUpdateRef = useRef<NodeJS.Timeout | null>(null);
 
+  // Update preset when basePreset changes
   useEffect(() => {
-    const found = findPreset(presetName) || null;
-    setPreset(found ? { ...found } : null);
-  }, [presetName]);
+    setPreset(basePreset);
+  }, [basePreset]);
 
   const update = (field: keyof SynthPreset, value: any) => {
     if (!preset) return;
