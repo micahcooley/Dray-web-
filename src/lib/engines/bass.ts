@@ -298,9 +298,9 @@ class ToneBassEngine implements BassEngineInterface {
         const ToneLib = await ensureTone() as ToneLibType;
 
         // TRANSPOSE DOWN 1 OCTAVE
-        let p = pitch;
-        if (typeof pitch === 'number') {
-            p = Math.max(0, pitch - 12);
+        let p = note;
+        if (typeof note === 'number') {
+            p = Math.max(0, note - 12);
         }
 
         const n = typeof p === 'number' ? (ToneLib as any).Frequency(p, 'midi').toNote() : p;

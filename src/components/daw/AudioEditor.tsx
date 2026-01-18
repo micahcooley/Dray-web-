@@ -81,38 +81,60 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
         // Stop any existing preview
         handlePreviewStop();
 
-        try {
-            await audioEngine.initialize();
-            const ctx = audioEngine.getContext();
+        const url = (selectedClip as any).url;
+        let retryCount = 0;
+        const maxRetries = 2;
 
-            // Fetch and decode the audio
-            const response = await fetch((selectedClip as any).url);
-            const arrayBuffer = await response.arrayBuffer();
-            const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        const attemptPlay = async (): Promise<void> => {
+            try {
+                await audioEngine.initialize();
+                const ctx = audioEngine.getContext();
 
-            // Create source and play
-            const source = ctx.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(ctx.destination);
+                // Fetch and decode the audio with retry logic
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                const arrayBuffer = await response.arrayBuffer();
+                const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 
-            // Apply pitch shift if specified
-            const pitch = (selectedClip as any).pitch ?? 0;
-            if (pitch !== 0) {
-                source.playbackRate.value = Math.pow(2, pitch / 12);
+                // Create source and play
+                const source = ctx.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(ctx.destination);
+
+                // Apply pitch shift if specified
+                const pitch = (selectedClip as any).pitch ?? 0;
+                if (pitch !== 0) {
+                    source.playbackRate.value = Math.pow(2, pitch / 12);
+                }
+
+                source.onended = () => {
+                    setIsPreviewing(false);
+                    previewSourceRef.current = null;
+                };
+
+                source.start();
+                previewSourceRef.current = source;
+                setIsPreviewing(true);
+            } catch (e) {
+                console.error(`Failed to play audio preview (attempt ${retryCount + 1}/${maxRetries + 1}):`, e);
+                
+                if (retryCount < maxRetries) {
+                    retryCount++;
+                    console.log(`Retrying preview playback (${retryCount}/${maxRetries})...`);
+                    // Wait before retrying
+                    await new Promise(resolve => setTimeout(resolve, 500 * retryCount));
+                    return attemptPlay();
+                } else {
+                    // Permanently failed
+                    setIsPreviewing(false);
+                    alert(`Failed to play audio preview after ${maxRetries + 1} attempts. The audio file may be corrupted or unavailable.`);
+                }
             }
+        };
 
-            source.onended = () => {
-                setIsPreviewing(false);
-                previewSourceRef.current = null;
-            };
-
-            source.start();
-            previewSourceRef.current = source;
-            setIsPreviewing(true);
-        } catch (e) {
-            console.error('Failed to play audio preview:', e);
-            setIsPreviewing(false);
-        }
+        await attemptPlay();
     };
 
     const handlePreviewStop = () => {
