@@ -33,9 +33,6 @@ import { SOUND_TYPE_MAP } from '../../lib/types';
 import nextDynamic from 'next/dynamic';
 const ThemeToggle = nextDynamic(() => import('../../components/ThemeToggle'), { ssr: false });
 
-// Initial tracks with real MIDI data
-};
-
 // Track colors by type
 const TRACK_COLORS = ['#eb459e', '#5865f2', '#57f287', '#fee75c', '#ed4245', '#9b59b6', '#3498db', '#1abc9c'];
 
@@ -837,10 +834,41 @@ export default function DAWPage() {
         return;
       }
 
-      // Audio file dropped on audio track - handle normally (could add audio import here)
+      // Audio file dropped on audio track - import audio clip
       if (file.type.startsWith('audio/') && targetTrack && targetTrack.type === 'audio') {
-        // TODO: Import audio clip to track
-        console.log('Audio file dropped on audio track - import not yet implemented');
+        try {
+          // Read file as ArrayBuffer
+          const arrayBuffer = await file.arrayBuffer();
+          
+          // Decode audio data
+          await audioEngine.initialize();
+          const audioBuffer = await audioEngine.getContext().decodeAudioData(arrayBuffer);
+          
+          // Calculate duration in beats (assuming 120 BPM, 2 beats per second)
+          const durationInSeconds = audioBuffer.duration;
+          const durationInBeats = durationInSeconds * (120 / 60); // Convert to beats
+          
+          // Create new audio clip
+          const newClip: Clip = {
+            start: 0, // Start at beginning of track
+            duration: durationInBeats,
+            name: file.name.replace(/\.[^/.]+$/, ''), // Remove file extension
+            notes: [] // Audio clips don't have notes
+          };
+          
+          // Add clip to track
+          setTracks(prev => prev.map(track => {
+            if (track.id !== targetTrackId) return track;
+            return {
+              ...track,
+              clips: [...(track.clips || []), newClip]
+            };
+          }), 'Import audio clip');
+          
+          console.log(`Imported audio clip "${newClip.name}" to track`);
+        } catch (error) {
+          console.error('Failed to import audio clip:', error);
+        }
         return;
       }
     }

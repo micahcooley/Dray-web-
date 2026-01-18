@@ -3,6 +3,7 @@
 import React, { useState, useCallback, useRef, useEffect, useMemo } from 'react';
 import { X, Play, Square, Trash2, Grid3X3 } from 'lucide-react';
 import { audioEngine } from '../../lib/audioEngine';
+import { audioScheduler } from '../../lib/scheduler';
 import {
   toneSynthEngine,
   toneDrumMachine,
@@ -414,14 +415,12 @@ export default function PianoRoll({
   useEffect(() => {
     return () => {
       // If we are closing, ensure we clear the scoped mode
-      const { audioScheduler } = require('../../lib/scheduler'); // Lazy import to avoid cycle if any
       audioScheduler.clearScopedMode();
     };
   }, []);
 
   // Sync notes to scheduler if playing in scoped mode
   useEffect(() => {
-    const { audioScheduler } = require('../../lib/scheduler');
     if (isPlaying && audioScheduler.scopedTrackId === trackId) {
       audioScheduler.setScopedMode(notes, trackId, instrument || '', trackType);
     }
@@ -441,8 +440,6 @@ export default function PianoRoll({
   }, [notes]);
 
   const handleTogglePlay = async () => {
-    const { audioScheduler } = require('../../lib/scheduler');
-
     if (!isPlaying) {
       await audioEngine.initialize();
       await audioEngine.resume();
@@ -462,8 +459,6 @@ export default function PianoRoll({
 
   // Double-click: restart from beginning
   const handlePlayDoubleClick = async () => {
-    const { audioScheduler } = require('../../lib/scheduler');
-
     // Reset playhead to beginning
     setCurrentTime(0);
 
