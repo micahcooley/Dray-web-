@@ -5,6 +5,8 @@ global.fetch = jest.fn(() =>
   Promise.reject(new Error('Network error'))
 ) as jest.Mock;
 
+const PRELOAD_TEST_TIMEOUT = 10000; // Allow time for retries
+
 describe('preload', () => {
   it('does not crash when preloading missing urls', async () => {
     const sched = AudioScheduler.getInstance();
@@ -14,5 +16,5 @@ describe('preload', () => {
     
     // Should not throw
     expect(true).toBe(true);
-  }, 10000); // Increase timeout to allow for retries
+  }, PRELOAD_TEST_TIMEOUT);
 });

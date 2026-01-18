@@ -14,6 +14,8 @@ interface AudioEditorProps {
 }
 
 const PIXELS_PER_BEAT = 40; // Base zoom
+const PREVIEW_RETRY_DELAY_MS = 500;
+const MAX_PREVIEW_RETRIES = 2;
 
 export default function AudioEditor({ track, onTrackChange, onClose }: AudioEditorProps) {
     const { isPlaying, togglePlay: storeTogglePlay } = useProjectStore();
@@ -24,6 +26,7 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
 
     // Preview playback state
     const [isPreviewing, setIsPreviewing] = useState(false);
+    const [previewError, setPreviewError] = useState<string | null>(null);
     const previewSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
     const selectedClip = useMemo(() =>
@@ -80,10 +83,10 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
 
         // Stop any existing preview
         handlePreviewStop();
+        setPreviewError(null);
 
         const url = (selectedClip as any).url;
         let retryCount = 0;
-        const maxRetries = 2;
 
         const attemptPlay = async (): Promise<void> => {
             try {
@@ -118,18 +121,20 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
                 previewSourceRef.current = source;
                 setIsPreviewing(true);
             } catch (e) {
-                console.error(`Failed to play audio preview (attempt ${retryCount + 1}/${maxRetries + 1}):`, e);
+                console.error(`Failed to play audio preview (attempt ${retryCount + 1}/${MAX_PREVIEW_RETRIES + 1}):`, e);
                 
-                if (retryCount < maxRetries) {
+                if (retryCount < MAX_PREVIEW_RETRIES) {
                     retryCount++;
-                    console.log(`Retrying preview playback (${retryCount}/${maxRetries})...`);
-                    // Wait before retrying
-                    await new Promise(resolve => setTimeout(resolve, 500 * retryCount));
+                    console.log(`Retrying preview playback (${retryCount}/${MAX_PREVIEW_RETRIES})...`);
+                    // Wait before retrying with exponential backoff
+                    await new Promise(resolve => setTimeout(resolve, PREVIEW_RETRY_DELAY_MS * retryCount));
                     return attemptPlay();
                 } else {
                     // Permanently failed
                     setIsPreviewing(false);
-                    alert(`Failed to play audio preview after ${maxRetries + 1} attempts. The audio file may be corrupted or unavailable.`);
+                    const errorMsg = `Failed to play audio preview after ${MAX_PREVIEW_RETRIES + 1} attempts. The audio file may be corrupted or unavailable.`;
+                    setPreviewError(errorMsg);
+                    console.error(errorMsg);
                 }
             }
         };
@@ -252,6 +257,29 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
                         <button className={styles.closeBtn} onClick={onClose}><X size={18} /></button>
                     </div>
                 </div>
+
+                {/* Error message display */}
+                {previewError && (
+                    <div style={{
+                        padding: '8px 12px',
+                        margin: '0 12px',
+                        background: '#ed4245',
+                        color: '#fff',
+                        borderRadius: 4,
+                        fontSize: '0.85rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between'
+                    }}>
+                        <span>{previewError}</span>
+                        <button
+                            onClick={() => setPreviewError(null)}
+                            style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 4 }}
+                        >
+                            <X size={16} />
+                        </button>
+                    </div>
+                )}
 
                 {/* Editor Controls */}
                 <div className={styles.controls}>

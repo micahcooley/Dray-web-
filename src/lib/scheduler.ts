@@ -12,6 +12,10 @@ export class AudioScheduler {
     private current16thNote = 0;
     private startTime = 0;
     private startOffset = 0;
+    
+    // Configuration constants
+    private static readonly RETRY_DELAY_MS = 500;
+    private static readonly MAX_RETRIES = 2;
 
     // Cache for audio buffers and pending loads
     private audioBufferCache = new Map<string, AudioBuffer>();
@@ -215,7 +219,11 @@ export class AudioScheduler {
         }
     }
 
-    public async preloadAudioClip(url: string, retryCount = 0): Promise<void> {
+    /**
+     * Preload an audio clip with retry logic
+     * @internal Use for scheduler internal preloading only
+     */
+    private async preloadAudioClipInternal(url: string, retryCount = 0): Promise<void> {
         // Return existing buffer immediately if cached
         if (this.audioBufferCache.has(url)) return Promise.resolve();
         
@@ -237,18 +245,18 @@ export class AudioScheduler {
                 // Flush any pending playback requests for this clip
                 this.flushPendingPlaybackRequests(url);
             } catch (e) {
-                console.error(`Failed to load audio clip (attempt ${retryCount + 1}/3):`, url, e);
+                console.error(`Failed to load audio clip (attempt ${retryCount + 1}/${AudioScheduler.MAX_RETRIES + 1}):`, url, e);
                 
-                // Retry up to 2 times (3 total attempts)
-                if (retryCount < 2) {
+                // Retry up to MAX_RETRIES times
+                if (retryCount < AudioScheduler.MAX_RETRIES) {
                     console.log(`Retrying decode for ${url}...`);
                     this.pendingLoads.delete(url);
-                    // Wait a bit before retrying
-                    await new Promise(resolve => setTimeout(resolve, 500 * (retryCount + 1)));
-                    return this.preloadAudioClip(url, retryCount + 1);
+                    // Wait a bit before retrying with exponential backoff
+                    await new Promise(resolve => setTimeout(resolve, AudioScheduler.RETRY_DELAY_MS * (retryCount + 1)));
+                    return this.preloadAudioClipInternal(url, retryCount + 1);
                 } else {
                     // Permanently failed after retries - log but don't throw
-                    console.error(`Permanently failed to load audio clip after 3 attempts:`, url);
+                    console.error(`Permanently failed to load audio clip after ${AudioScheduler.MAX_RETRIES + 1} attempts:`, url);
                     // Clear any pending playback requests since we can't fulfill them
                     this.pendingPlaybackRequests.delete(url);
                 }
@@ -259,6 +267,13 @@ export class AudioScheduler {
         
         this.pendingLoads.set(url, loadPromise);
         return loadPromise;
+    }
+    
+    /**
+     * Public API to preload an audio clip
+     */
+    public async preloadAudioClip(url: string): Promise<void> {
+        return this.preloadAudioClipInternal(url, 0);
     }
 
     private async preloadProjectClips(tracks: Track[]): Promise<void> {
