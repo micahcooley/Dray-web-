@@ -44,6 +44,21 @@ export class AudioScheduler {
     // Configurable poll interval
     private pollIntervalMs = 6;
 
+    // Diagnostics tracking
+    private diagnostics = {
+        usingWorklet: false,
+        totalTicks: 0,
+        missedTicks: 0,
+        latencySamples: [] as number[],
+        latencySum: 0,
+        lastTickTime: 0,
+        expectedTickTime: 0,
+        jitterSamples: [] as number[],
+        samplesScheduled: 0,
+        samplesDropped: 0,
+        maxLatencySamples: 1000, // Keep last 1000 samples for percentile calculation
+    };
+
     private constructor() { }
 
     public static getInstance(): AudioScheduler {
@@ -104,6 +119,17 @@ export class AudioScheduler {
         this.startTime = audioEngine.getNow() - this.startOffset;
         this.nextNoteTime = audioEngine.getNow();
 
+        // Reset diagnostics
+        this.diagnostics.totalTicks = 0;
+        this.diagnostics.missedTicks = 0;
+        this.diagnostics.latencySamples = [];
+        this.diagnostics.latencySum = 0;
+        this.diagnostics.jitterSamples = [];
+        this.diagnostics.samplesScheduled = 0;
+        this.diagnostics.samplesDropped = 0;
+        this.diagnostics.lastTickTime = 0;
+        this.diagnostics.expectedTickTime = 0;
+
         // 1. Try to register and use AudioWorklet
         let workletReady = false;
         try {
@@ -125,9 +151,11 @@ export class AudioScheduler {
 
                 console.log("AudioScheduler: Using AudioWorklet for timing");
                 workletReady = true;
+                this.diagnostics.usingWorklet = true;
             }
         } catch (e) {
             console.warn('Worklet registration failed, falling back to interval', e);
+            this.diagnostics.usingWorklet = false;
         }
 
         // 2. Always use setInterval for the main Lookahead loop (Issue: Worklet jitter)
@@ -145,6 +173,9 @@ export class AudioScheduler {
             const now = audioEngine.getNow();
             const lookAheadTime = now + LOOKAHEAD_TIME;
 
+            // Track tick timing for diagnostics
+            const schedulerCallTime = now;
+            
             // Schedule all notes within the lookahead window
             while (this.nextNoteTime < lookAheadTime) {
                 // Calculate beat from nextNoteTime
@@ -158,6 +189,50 @@ export class AudioScheduler {
                 const current16th = Math.round(timeSinceStart / secondsPer16th);
 
                 this.current16thNote = current16th; // Sync state
+
+                // Track diagnostics for this tick
+                this.diagnostics.totalTicks++;
+                
+                // Calculate expected tick time
+                if (this.diagnostics.expectedTickTime === 0) {
+                    this.diagnostics.expectedTickTime = this.nextNoteTime;
+                } else {
+                    this.diagnostics.expectedTickTime += secondsPer16th;
+                }
+
+                // Calculate latency (time between when we should have scheduled vs when we did)
+                const latency = schedulerCallTime - this.nextNoteTime;
+                if (latency > 0) {
+                    // We're behind schedule
+                    const latencyMs = latency * 1000;
+                    this.diagnostics.latencySamples.push(latencyMs);
+                    this.diagnostics.latencySum += latencyMs;
+                    
+                    // Keep only recent samples
+                    if (this.diagnostics.latencySamples.length > this.diagnostics.maxLatencySamples) {
+                        const removed = this.diagnostics.latencySamples.shift()!;
+                        this.diagnostics.latencySum -= removed;
+                    }
+
+                    // Track missed ticks (latency > threshold, e.g., > half a tick duration)
+                    if (latencyMs > (secondsPer16th * 500)) { // 50% of tick duration
+                        this.diagnostics.missedTicks++;
+                    }
+                }
+
+                // Calculate jitter (variation in tick timing)
+                if (this.diagnostics.lastTickTime > 0) {
+                    const actualInterval = this.nextNoteTime - this.diagnostics.lastTickTime;
+                    const expectedInterval = secondsPer16th;
+                    const jitter = Math.abs(actualInterval - expectedInterval) * 1000; // in ms
+                    this.diagnostics.jitterSamples.push(jitter);
+                    
+                    // Keep only recent jitter samples
+                    if (this.diagnostics.jitterSamples.length > this.diagnostics.maxLatencySamples) {
+                        this.diagnostics.jitterSamples.shift();
+                    }
+                }
+                this.diagnostics.lastTickTime = this.nextNoteTime;
 
                 this.scheduleNotesAtTime(this.current16thNote, this.nextNoteTime);
                 this.advanceNote();
@@ -200,7 +275,24 @@ export class AudioScheduler {
     // Worklet message handler refactored to NOT schedule, just sync/debug
     private handleWorkletMessage(msg: any) {
         if (msg.type === 'tick') {
-            // We can use this to correct drift if needed, but for now rely on AudioContext time
+            // Track worklet tick messages for diagnostic purposes
+            const now = audioEngine.getNow();
+            const receivedTime = now;
+            const workletTime = msg.engineTime || now;
+            
+            // Calculate latency from worklet to main thread
+            const workletLatency = (receivedTime - workletTime) * 1000; // in ms
+            
+            if (workletLatency > 0 && workletLatency < 1000) { // Sanity check
+                this.diagnostics.latencySamples.push(workletLatency);
+                this.diagnostics.latencySum += workletLatency;
+                
+                // Keep only recent samples
+                if (this.diagnostics.latencySamples.length > this.diagnostics.maxLatencySamples) {
+                    const removed = this.diagnostics.latencySamples.shift()!;
+                    this.diagnostics.latencySum -= removed;
+                }
+            }
         }
     }
 
@@ -571,14 +663,55 @@ export class AudioScheduler {
     }
 
     public getDiagnostics() {
+        // Calculate average latency
+        const avgLatencyMs = this.diagnostics.latencySamples.length > 0
+            ? this.diagnostics.latencySum / this.diagnostics.latencySamples.length
+            : 0;
+
+        // Calculate 95th percentile latency
+        let p95LatencyMs = 0;
+        if (this.diagnostics.latencySamples.length > 0) {
+            const sorted = [...this.diagnostics.latencySamples].sort((a, b) => a - b);
+            const index = Math.floor(sorted.length * 0.95);
+            p95LatencyMs = sorted[index] || 0;
+        }
+
+        // Calculate average jitter
+        const avgJitterMs = this.diagnostics.jitterSamples.length > 0
+            ? this.diagnostics.jitterSamples.reduce((sum, val) => sum + val, 0) / this.diagnostics.jitterSamples.length
+            : 0;
+
+        // Calculate max jitter
+        const maxJitterMs = this.diagnostics.jitterSamples.length > 0
+            ? Math.max(...this.diagnostics.jitterSamples)
+            : 0;
+
         return {
+            // Legacy fields for backward compatibility
             sabUsed: false,
-            // Returning dummy stats to keep UI happy if it checks these
             head: 0,
             tail: 0,
             unread: 0,
-            avgLatencyMs: 0,
-            samples: 0
+            avgLatencyMs,
+            samples: this.diagnostics.latencySamples.length,
+
+            // New comprehensive diagnostics
+            usingWorklet: this.diagnostics.usingWorklet,
+            totalTicks: this.diagnostics.totalTicks,
+            missedTicks: this.diagnostics.missedTicks,
+            missedTickPercentage: this.diagnostics.totalTicks > 0 
+                ? (this.diagnostics.missedTicks / this.diagnostics.totalTicks) * 100 
+                : 0,
+            p95LatencyMs,
+            avgJitterMs,
+            maxJitterMs,
+            latencySamples: [...this.diagnostics.latencySamples], // Copy for UI visualization
+            jitterSamples: [...this.diagnostics.jitterSamples], // Copy for UI visualization
+            samplesScheduled: this.diagnostics.samplesScheduled,
+            samplesDropped: this.diagnostics.samplesDropped,
+            isRunning: this.isRunning(),
+            currentTempo: this.tempoCache,
+            audioContextState: audioEngine.getState(),
         };
     }
 }

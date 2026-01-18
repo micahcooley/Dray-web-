@@ -355,6 +355,36 @@ class AudioEngine {
       return null; // Logic will fallback to setInterval
     }
   }
+
+  // Diagnostic methods for monitoring audio engine health
+  public getDiagnostics() {
+    return {
+      contextState: this.context?.state || 'unknown',
+      isInitialized: this._isInitialized,
+      latencyHint: this.currentLatencyHint,
+      lookAhead: this.currentLookAhead,
+      contextTime: this.context?.currentTime || 0,
+      sampleRate: this.context?.sampleRate || 0,
+      baseLatency: this.context?.baseLatency || 0,
+      outputLatency: (this.context as any)?.outputLatency || 0,
+    };
+  }
+
+  public getWorkletStatus(): { available: boolean; reason?: string } {
+    if (!this.context) {
+      return { available: false, reason: 'Context not initialized' };
+    }
+    
+    if (typeof AudioWorkletNode === 'undefined') {
+      return { available: false, reason: 'AudioWorkletNode not supported' };
+    }
+
+    if (!this.context.audioWorklet) {
+      return { available: false, reason: 'audioWorklet not available on context' };
+    }
+
+    return { available: true };
+  }
 }
 
 export const audioEngine = AudioEngine.getInstance();
