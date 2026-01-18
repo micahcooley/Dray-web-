@@ -27,7 +27,7 @@ class ToneKeysEngine implements KeysEngineInterface {
     }
 
     // Helper to add reverb send
-    private attachReverb(source: any, type: 'short' | 'medium' | 'long', amount: number, key: string) {
+    private attachReverb(source: Tone.ToneAudioNode, type: 'short' | 'medium' | 'long', amount: number, _key: string) {
         const rev = globalReverbs.getReverb(type);
         if (!rev) return;
         ensureTone().then((ToneLib: any) => {
@@ -62,7 +62,6 @@ class ToneKeysEngine implements KeysEngineInterface {
                 // FM synthesis for that classic DX7 Rhodes-style sound
                 const tremolo = new ToneLib.Tremolo({ frequency: 3.5, depth: 0.3 }).start();
                 const chorus = new ToneLib.Chorus({ frequency: 1.2, delayTime: 3.5, depth: 0.4 }).start();
-                const reverb = new ToneLib.Reverb({ decay: 1.5, wet: 0.25 });
 
                 synth = new ToneLib.PolySynth(ToneLib.FMSynth, {
                     harmonicity: 3.01,
@@ -88,7 +87,6 @@ class ToneKeysEngine implements KeysEngineInterface {
                 // Classic Rhodes with characteristic bark and bell tones
                 const tremolo = new ToneLib.Tremolo({ frequency: 4.2, depth: 0.25 }).start();
                 const phaser = new ToneLib.Phaser({ frequency: 0.5, octaves: 3, baseFrequency: 350 });
-                const reverb = new ToneLib.Reverb({ decay: 2, wet: 0.2 });
 
                 synth = new ToneLib.PolySynth(ToneLib.FMSynth, {
                     harmonicity: 2,
@@ -114,7 +112,6 @@ class ToneKeysEngine implements KeysEngineInterface {
                 // Brighter, more aggressive FM - the "funky" electric piano
                 const distortion = new ToneLib.Distortion({ distortion: 0.15 });
                 const tremolo = new ToneLib.Tremolo({ frequency: 5.5, depth: 0.4 }).start();
-                const reverb = new ToneLib.Reverb({ decay: 1, wet: 0.15 });
 
                 synth = new ToneLib.PolySynth(ToneLib.FMSynth, {
                     harmonicity: 4,
@@ -160,7 +157,6 @@ class ToneKeysEngine implements KeysEngineInterface {
             case 'Warm Keys': {
                 // Soft, warm analog-style keys
                 const chorus = new ToneLib.Chorus({ frequency: 0.8, delayTime: 4, depth: 0.5 }).start();
-                const reverb = new ToneLib.Reverb({ decay: 2.5, wet: 0.3 });
                 const filter = new ToneLib.Filter({ frequency: 1800, type: 'lowpass', Q: 0.5 });
 
                 synth = new ToneLib.PolySynth(ToneLib.Synth, {
@@ -184,7 +180,6 @@ class ToneKeysEngine implements KeysEngineInterface {
                 const bitcrusher = new ToneLib.BitCrusher({ bits: 8 });
                 const filter = new ToneLib.Filter({ frequency: 2200, type: 'lowpass', Q: 0.3 });
                 const vibrato = new ToneLib.Vibrato({ frequency: 0.5, depth: 0.08 });
-                const reverb = new ToneLib.Reverb({ decay: 2, wet: 0.35 });
 
                 synth = new ToneLib.PolySynth(ToneLib.Synth, {
                     oscillator: { type: 'triangle' },
@@ -207,7 +202,6 @@ class ToneKeysEngine implements KeysEngineInterface {
                 // Additive sine harmonics simulating drawbar organ
                 const chorus = new ToneLib.Chorus({ frequency: 6, delayTime: 2, depth: 0.3 }).start();
                 const distortion = new ToneLib.Distortion({ distortion: 0.08 });
-                const reverb = new ToneLib.Reverb({ decay: 1.5, wet: 0.2 });
 
                 // Use AMSynth for harmonic richness
                 synth = new ToneLib.PolySynth(ToneLib.AMSynth, {
@@ -231,7 +225,6 @@ class ToneKeysEngine implements KeysEngineInterface {
             case 'Grand Piano':
             case 'Piano': {
                 // Sampler-less piano approximation using FM
-                const reverb = new ToneLib.Reverb({ decay: 3, wet: 0.25 });
                 const compressor = new ToneLib.Compressor({ threshold: -20, ratio: 3 });
 
                 synth = new ToneLib.PolySynth(ToneLib.FMSynth, {
@@ -254,7 +247,6 @@ class ToneKeysEngine implements KeysEngineInterface {
 
             case 'Harpsichord': {
                 // Plucky, metallic harpsichord using FM synthesis
-                const reverb = new ToneLib.Reverb({ decay: 2, wet: 0.3 });
 
                 synth = new ToneLib.PolySynth(ToneLib.FMSynth, {
                     harmonicity: 8,
@@ -454,7 +446,6 @@ class ToneKeysEngine implements KeysEngineInterface {
 
             default: {
                 // Default fallback - nice general purpose keys sound
-                const reverb = new ToneLib.Reverb({ decay: 1.5, wet: 0.2 });
                 synth = new ToneLib.PolySynth(ToneLib.Synth, {
                     oscillator: { type: 'triangle' },
                     envelope: { attack: 0.01, decay: 0.5, sustain: 0.4, release: 0.5 }
@@ -496,7 +487,7 @@ class ToneKeysEngine implements KeysEngineInterface {
                     if (prevBundle.synth.triggerRelease) prevBundle.synth.triggerRelease(this.lastPreviewNote.note);
                     else if (prevBundle.synth.releaseAll) prevBundle.synth.releaseAll();
                 }
-            } catch (e) { }
+            } catch (_e) { }
         }
 
         // FAST PATH: If synth is already cached, play immediately
@@ -507,7 +498,7 @@ class ToneKeysEngine implements KeysEngineInterface {
                 try {
                     cachedBundle.synth.triggerAttackRelease?.(n, '8n', undefined, velocity);
                     this.lastPreviewNote = { key, note: n };
-                } catch (e) {
+                } catch (_e) {
                     console.error("Error in previewNote (cached):", e);
                 }
             });
@@ -521,7 +512,7 @@ class ToneKeysEngine implements KeysEngineInterface {
             try {
                 bundle.synth.triggerAttackRelease?.(n, '8n', undefined, velocity);
                 this.lastPreviewNote = { key, note: n };
-            } catch (e) {
+            } catch (_e) {
                 console.error("Error in previewNote (async):", e);
             }
         }).catch(e => console.error("Error getting synth for preview:", e));

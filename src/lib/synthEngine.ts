@@ -273,7 +273,7 @@ export class SynthEngine {
 
     // Stop all notes immediately
     panic() {
-        for (const [key, voice] of this.activeVoices) {
+        for (const [_key, voice] of this.activeVoices) {
             try {
                 voice.oscillators.forEach(osc => {
                     try { osc.stop(); } catch { }

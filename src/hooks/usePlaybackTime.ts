@@ -59,7 +59,7 @@ export function usePlaybackTimeRef() {
     const timeRef = useRef(0);
 
     useEffect(() => {
-        const unsubscribe = audioScheduler.subscribe((time, step) => {
+        const unsubscribe = audioScheduler.subscribe((time, _step) => {
             timeRef.current = time;
         });
         return () => { unsubscribe(); };

@@ -9,9 +9,14 @@ jest.mock('../src/lib/audioEngine', () => ({
     getNow: jest.fn(() => 1.5), // engine time sample
     getContext: jest.fn(() => ({ currentTime: 0.5 })), // audio context now
     registerSchedulerWorklet: jest.fn(() => {
-      const port: any = { start: jest.fn(), postMessage: jest.fn(), onmessage: null };
-      setTimeout(() => port.onmessage && port.onmessage({ data: { type: 'tick', tickIndex: 0, engineTime: 1.5 } }));
-      return Promise.resolve({ port });
+      const port: Partial<MessagePort> = { 
+        start: jest.fn(), 
+        postMessage: jest.fn(), 
+        onmessage: null,
+        close: jest.fn()
+      };
+      setTimeout(() => port.onmessage && port.onmessage({ data: { type: 'tick', tickIndex: 0, engineTime: 1.5 } } as MessageEvent));
+      return Promise.resolve({ port: port as MessagePort });
     }),
     onStateChange: jest.fn()
   }

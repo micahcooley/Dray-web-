@@ -41,8 +41,8 @@ export default function SynthEditorPanel({ presetName, onPresetChange }: SynthEd
           addPreset({ ...(preset as SynthPreset) });
         }
         // notify synth engine to apply changes to active voices (if method exists)
-        try { (toneSynthEngine as any).applyPresetUpdate?.(preset.name, { [field]: value }); } catch (e) { /* method may not exist */ }
-      } catch (e) {
+        try { (toneSynthEngine as any).applyPresetUpdate?.(preset.name, { [field]: value }); } catch (_e) { /* method may not exist */ }
+      } catch (_e) {
         console.error('Failed to apply preset update', e);
       }
     }, 180);
@@ -59,7 +59,7 @@ export default function SynthEditorPanel({ presetName, onPresetChange }: SynthEd
     setStatus('Playing preview...');
     try {
       toneSynthEngine.playNote(-1, preset.name, previewNote, 0.5, 0.9);
-    } catch (e) {
+    } catch (_e) {
       console.error('Preview play error', e);
       setStatus('Preview failed');
       setTimeout(() => setStatus(null), 1500);
@@ -81,7 +81,7 @@ export default function SynthEditorPanel({ presetName, onPresetChange }: SynthEd
       setStatus('Preset saved');
       clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => setStatus(null), 1400);
-    } catch (e) {
+    } catch (_e) {
       console.error('Save preset failed', e);
       setStatus('Save failed');
       setTimeout(() => setStatus(null), 1400);
@@ -93,7 +93,7 @@ export default function SynthEditorPanel({ presetName, onPresetChange }: SynthEd
     if (!original) return;
     setPreset({ ...original });
     // apply immediately
-    try { updatePreset(original.name, original); } catch (e) { console.error('reset apply failed', e); }
+    try { updatePreset(original.name, original); } catch (_e) { console.error('reset apply failed', e); }
     setStatus('Reset to original');
     setTimeout(() => setStatus(null), 1200);
   };

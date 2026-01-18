@@ -109,7 +109,7 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
             source.start();
             previewSourceRef.current = source;
             setIsPreviewing(true);
-        } catch (e) {
+        } catch (_e) {
             console.error('Failed to play audio preview:', e);
             setIsPreviewing(false);
         }
@@ -119,7 +119,7 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
         if (previewSourceRef.current) {
             try {
                 previewSourceRef.current.stop();
-            } catch (e) { /* already stopped */ }
+            } catch (_e) { /* already stopped */ }
             previewSourceRef.current = null;
         }
         setIsPreviewing(false);

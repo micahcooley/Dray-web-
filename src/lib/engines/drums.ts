@@ -438,7 +438,7 @@ class ToneDrumMachine {
 
     stopAll() {
         // Can't really stop drums naturally, but we could release all envelopes
-        this.drumBundles.forEach(bundle => {
+        this.drumBundles.forEach(_bundle => {
             // Optional: silence them
         });
     }

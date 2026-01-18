@@ -266,7 +266,7 @@ class StemSeparator {
      */
     private async extractOther(
         source: AudioBuffer,
-        stems: AudioBuffer[]
+        _stems: AudioBuffer[]
     ): Promise<AudioBuffer> {
         const ctx = new OfflineAudioContext(
             source.numberOfChannels,

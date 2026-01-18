@@ -24,7 +24,7 @@ class AudioEngine {
     // If we are already initialized and the context is running or valid, just resume if needed
     if (this._isInitialized && this.context) {
       if (this.context.state === 'suspended') {
-        try { await this.context.resume(); } catch (e) { }
+        try { await this.context.resume(); } catch (_e) { }
       }
       return;
     }
@@ -55,14 +55,14 @@ class AudioEngine {
 
       // 5. Ensure we are running
       if (this.context.state === 'suspended') {
-        try { await this.context.resume(); } catch (e) { }
+        try { await this.context.resume(); } catch (_e) { }
       }
 
       // 6. Create Master Gain
       // We use Tone's master output for simplicity and chain validity
       try {
         this.masterGain = this.Tone.getDestination();
-      } catch (e) {
+      } catch (_e) {
         console.error("Failed to get Tone destination", e);
         // Fallback should rarely happen if Tone started
         this.masterGain = this.context.destination;
@@ -132,7 +132,7 @@ class AudioEngine {
     }
     const ch = this.getTrackChannel(trackId);
     // Ramp to avoid clicks
-    try { ch.volume.gain.rampTo(value, 0.05); } catch (e) { ch.volume.gain.value = value; }
+    try { ch.volume.gain.rampTo(value, 0.05); } catch (_e) { ch.volume.gain.value = value; }
   }
 
   public updateTrackPan(trackId: number, value: number) {
@@ -143,7 +143,7 @@ class AudioEngine {
       return;
     }
     const ch = this.getTrackChannel(trackId);
-    try { ch.panner.pan.rampTo(value / 100, 0.05); } catch (e) { ch.panner.pan.value = value / 100; }
+    try { ch.panner.pan.rampTo(value / 100, 0.05); } catch (_e) { ch.panner.pan.value = value / 100; }
   }
 
   public getTrackLevels(): Record<number, number> {
@@ -157,7 +157,7 @@ class AudioEngine {
         // -60dB = 0, 0dB = 1.
         const val = typeof v === 'number' ? v : -100;
         out[id] = Math.max(0, Math.min(1, (val + 60) / 60));
-      } catch (e) { out[id] = 0; }
+      } catch (_e) { out[id] = 0; }
     });
     return out;
   }
@@ -197,7 +197,7 @@ class AudioEngine {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();
       return devices;
-    } catch (e) {
+    } catch (_e) {
       console.error('Failed to enumerate devices:', e);
       return [];
     }
@@ -221,7 +221,7 @@ class AudioEngine {
         osc.stop();
         osc.dispose();
       }, 500);
-    } catch (e) {
+    } catch (_e) {
       console.error('Failed to play test tone:', e);
     }
   }
@@ -231,7 +231,7 @@ class AudioEngine {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach(t => t.stop());
       return true;
-    } catch (e) {
+    } catch (_e) {
       console.error('Failed to get audio permissions:', e);
       return false;
     }
@@ -341,7 +341,7 @@ class AudioEngine {
       const node = new AudioWorkletNode(this.context, 'scheduler-processor');
 
       // Handle messages from the processor if needed (though we mostly listen on the port in Scheduler.ts)
-      node.port.onmessage = (event) => {
+      node.port.onmessage = (_event) => {
         // Debugging or internal logic
       };
 
@@ -350,7 +350,7 @@ class AudioEngine {
 
       return { node };
 
-    } catch (e) {
+    } catch (_e) {
       console.error("Failed to register scheduler worklet:", e);
       return null; // Logic will fallback to setInterval
     }

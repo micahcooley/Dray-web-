@@ -151,7 +151,7 @@ class ToneFXEngine implements FXEngineInterface {
      * Signature: (trackId, preset, note, velocity) - standardized across all engines
      * For FX, 'preset' is the FX type and 'note' is ignored.
      */
-    async previewNote(trackId: number, preset: string, note: number | string = 60, velocity: number = 0.8) {
+    async previewNote(trackId: number, preset: string, _note: number | string = 60, velocity: number = 0.8) {
         if (!this.initialized) await this.initialize();
 
         // Stop previous preview node immediately
@@ -159,7 +159,7 @@ class ToneFXEngine implements FXEngineInterface {
             try {
                 if (this.lastPreviewNode.stop) this.lastPreviewNode.stop();
                 if (this.lastPreviewNode.dispose) this.lastPreviewNode.dispose();
-            } catch (e) { }
+            } catch (_e) { }
             this.lastPreviewNode = null;
         }
 

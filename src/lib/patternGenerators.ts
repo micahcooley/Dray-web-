@@ -74,9 +74,10 @@ const ROOT_MAP: Record<string, number> = {
 // ============================================
 // HUMANIZATION HELPERS
 // ============================================
-function humanize(value: number, amount: number): number {
-    return value + (Math.random() - 0.5) * amount;
-}
+// Utility for future humanization features
+// function humanize(value: number, amount: number): number {
+//     return value + (Math.random() - 0.5) * amount;
+// }
 
 function humanizeVelocity(base: number, variation: number = 0.1): number {
     return Math.max(0.1, Math.min(1, base + (Math.random() - 0.5) * variation));
@@ -409,7 +410,6 @@ export const PatternGenerators = {
         const scale = options.scale ?? 'Minor';
         const length = options.length ?? 4;
         const density = options.density ?? 'medium';
-        const style = (options.style ?? '').toLowerCase();
 
         const root = ROOT_MAP[key] ?? 60;
         const scaleIntervals = SCALES[scale] ?? SCALES['Minor'];

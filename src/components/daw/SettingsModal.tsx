@@ -28,7 +28,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             const devices = await audioEngine.getAudioDevices();
             setOutputs(devices.filter(d => d.kind === 'audiooutput'));
             setInputs(devices.filter(d => d.kind === 'audioinput'));
-        } catch (e) {
+        } catch (_e) {
             console.error("Failed to load devices", e);
         }
     };
@@ -47,7 +47,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
                 } else {
                     setMeterLevel(0);
                 }
-            } catch (e) {
+            } catch (_e) {
                 setMeterLevel(0);
             }
             animationFrame = requestAnimationFrame(updateMeter);
