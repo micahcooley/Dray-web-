@@ -28,28 +28,25 @@ export default function VolumeMeter({
 
     // Animate audio level during playback (throttled to 30fps for performance)
     useEffect(() => {
-        if (!isPlaying || isMuted) {
-            setMeterLevel(0);
-            return;
-        }
-
         let animId: number;
         let lastTime = 0;
         const FRAME_TIME = 33; // ~30fps for performance
 
         const animate = (currentTime: number) => {
             if (currentTime - lastTime >= FRAME_TIME) {
-                // Get REAL audio level from engine
-                const levels = audioEngine.getTrackLevels();
-                // Default to 0 if track not initializing yet
-                const level = levels[trackId] || 0;
-                setMeterLevel(level);
+                if (!isPlaying || isMuted) {
+                    setMeterLevel(0);
+                } else {
+                    // Get REAL audio level from engine
+                    const levels = audioEngine.getTrackLevels();
+                    // Default to 0 if track not initializing yet
+                    const level = levels[trackId] || 0;
+                    setMeterLevel(level);
+                }
                 lastTime = currentTime;
             }
 
-            if (isPlaying && !isMuted) {
-                animId = requestAnimationFrame(animate);
-            }
+            animId = requestAnimationFrame(animate);
         };
 
         animId = requestAnimationFrame(animate);
@@ -61,13 +58,6 @@ export default function VolumeMeter({
         audioEngine.updateTrackVolume(trackId, newVal);
         // Call parent handler to update store/state
         onVolumeChange(newVal);
-    };
-
-    // Helper to get color for current level
-    const getLevelColor = (level: number) => {
-        if (level > 0.9) return '#ff4d4d'; // Red
-        if (level > 0.7) return '#ffcc00'; // Yellow
-        return '#4caf50'; // Green
     };
 
     // Convert linear 0-1 to dB approximation for display

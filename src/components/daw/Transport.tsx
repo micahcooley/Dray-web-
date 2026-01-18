@@ -2,7 +2,7 @@
 
 import React from 'react';
 import {
-    Play, Square, Circle, SkipBack, SkipForward, Settings, Share2, Sparkles
+    Play, Square, Circle, SkipBack, Settings, Share2, Sparkles
 } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { audioEngine } from '../../lib/audioEngine';
@@ -41,8 +41,8 @@ export default function Transport({ project }: TransportProps) {
                 audioEngine.suspend();
                 storeTogglePlay();
             }
-        } catch (e) {
-            console.error('Error toggling playback:', e);
+        } catch (_e) {
+            console.error('Error toggling playback:', _e);
         }
     };
 
@@ -54,8 +54,8 @@ export default function Transport({ project }: TransportProps) {
                 await audioScheduler.start();
             }
             audioScheduler.setTime(0);
-        } catch (e) {
-            console.error('Seek error:', e);
+        } catch (_e) {
+            console.error('Seek error:', _e);
         }
     };
 

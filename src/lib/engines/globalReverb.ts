@@ -1,5 +1,4 @@
 import { ensureTone } from '../toneWrapper';
-import { audioEngine } from '../audioEngine';
 
 class GlobalReverbManager {
     private reverbs: { short: any; medium: any; long: any } | null = null;

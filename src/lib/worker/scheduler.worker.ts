@@ -2,7 +2,7 @@
 // Main thread must send an 'init' message containing { engineNow, perfNow, tempo, startTick }
 
 let running = false;
-let tickIntervalMs = 25; // heartbeat for worker scheduling
+const tickIntervalMs = 25; // heartbeat for worker scheduling
 let secondsPer16th = 0.125; // default
 let nextTickPerfTime = 0; // performance.now() time for next tick in ms
 let currentTick = 0;

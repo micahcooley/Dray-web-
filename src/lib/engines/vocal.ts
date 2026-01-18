@@ -477,7 +477,7 @@ class ToneVocalEngine implements VocalEngineInterface {
                     if (prevBundle.synth.triggerRelease) prevBundle.synth.triggerRelease(this.lastPreviewNote.note);
                     else if (prevBundle.synth.releaseAll) prevBundle.synth.releaseAll();
                 }
-            } catch (e) { }
+            } catch (_e) { }
         }
 
         // FAST PATH: If synth is already cached, play immediately
@@ -488,8 +488,8 @@ class ToneVocalEngine implements VocalEngineInterface {
                 try {
                     cachedBundle.synth.triggerAttackRelease?.(n, '8n', undefined, velocity);
                     this.lastPreviewNote = { key, note: n };
-                } catch (e) {
-                    console.error("Error in previewNote (cached):", e);
+                } catch (_e) {
+                    console.error("Error in previewNote (cached):", _e);
                 }
             });
             return;
@@ -502,8 +502,8 @@ class ToneVocalEngine implements VocalEngineInterface {
             try {
                 bundle.synth.triggerAttackRelease?.(n, '8n', undefined, velocity);
                 this.lastPreviewNote = { key, note: n };
-            } catch (e) {
-                console.error("Error in previewNote (async):", e);
+            } catch (_e) {
+                console.error("Error in previewNote (async):", _e);
             }
         }).catch(e => console.error("Error getting synth for preview:", e));
     }

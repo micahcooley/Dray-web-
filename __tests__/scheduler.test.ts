@@ -46,7 +46,7 @@ jest.mock('../src/lib/audioEngine', () => ({
     getNow: jest.fn(() => 0),
     onStateChange: jest.fn(),
     registerSchedulerWorklet: jest.fn(() => Promise.resolve(null)),
-    getContext: jest.fn(() => ({ currentTime: 0, decodeAudioData: async (buf: any) => ({}) }))
+    getContext: jest.fn(() => ({ currentTime: 0, decodeAudioData: async (_buf: ArrayBuffer) => ({} as AudioBuffer) }))
   }
 }));
 

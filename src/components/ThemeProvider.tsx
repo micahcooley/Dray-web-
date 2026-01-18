@@ -13,24 +13,24 @@ interface ThemeContextType {
 const ThemeContext = createContext<ThemeContextType | undefined>(undefined);
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-    // Default to dark to match server-side rendering and avoid white flash
-    const [theme, setTheme] = useState<Theme>('dark');
+    // Compute initial theme from localStorage during state initialization
+    const [theme, setTheme] = useState<Theme>(() => {
+        if (typeof window !== 'undefined') {
+            const saved = localStorage.getItem('drey-theme') as Theme;
+            return saved || 'dark';
+        }
+        return 'dark';
+    });
     const [mounted, setMounted] = useState(false);
 
     useEffect(() => {
-        // Check local storage on mount
         // load any custom synth presets saved by the user
         try { if (typeof window !== 'undefined') loadCustomPresets(); } catch (e) { console.warn('Failed to load custom presets', e); }
-        const saved = localStorage.getItem('drey-theme') as Theme;
-        if (saved) {
-            setTheme(saved);
-            document.documentElement.setAttribute('data-theme', saved);
-        } else {
-            // Default to dark explicitly
-            document.documentElement.setAttribute('data-theme', 'dark');
-        }
+        
+        // Set the theme attribute on document
+        document.documentElement.setAttribute('data-theme', theme);
         setMounted(true);
-    }, []);
+    }, [theme]);
 
     const toggleTheme = () => {
         const newTheme = theme === 'dark' ? 'light' : 'dark';

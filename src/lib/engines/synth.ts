@@ -31,7 +31,7 @@ class ToneSynthEngine {
     }
 
     // Connects a source to the global reverb bus
-    private attachReverb(source: any, type: 'short' | 'medium' | 'long', amount: number, key: string) {
+    private attachReverb(source: Tone.ToneAudioNode, type: 'short' | 'medium' | 'long', amount: number, _key: string) {
         // We use a send gain
         ensureTone().then((ToneLib: any) => {
             const reverb = globalReverbs.getReverb(type);
@@ -559,8 +559,8 @@ class ToneSynthEngine {
             try {
                 const bundle = this.trackSynths.get(key);
                 bundle.synth.triggerAttackRelease(note, duration, time, velocity);
-            } catch (e) {
-                console.error("Error playing synth note:", e);
+            } catch (_e) {
+                console.error("Error playing synth note:", _e);
             }
             return;
         }
@@ -572,8 +572,8 @@ class ToneSynthEngine {
                 // Add small delay to account for async creation time
                 const adjustedTime = time !== undefined ? time + 0.05 : undefined;
                 bundle.synth.triggerAttackRelease(note, duration, adjustedTime, velocity);
-            } catch (e) {
-                console.error("Error playing synth note (async):", e);
+            } catch (_e) {
+                console.error("Error playing synth note (async):", _e);
             }
         }).catch(e => console.error("Error getting synth:", e));
     }
@@ -593,7 +593,7 @@ class ToneSynthEngine {
                 if (prevBundle) {
                     prevBundle.synth.triggerRelease(this.lastPreviewNote.note);
                 }
-            } catch (e) { }
+            } catch (_e) { }
         }
 
         // FAST PATH: If synth is already cached, play immediately (no await!)
@@ -602,8 +602,8 @@ class ToneSynthEngine {
             try {
                 cachedBundle.synth.triggerAttackRelease(note, '8n', undefined, velocity);
                 this.lastPreviewNote = { key, note };
-            } catch (e) {
-                console.error("Error in previewNote (cached):", e);
+            } catch (_e) {
+                console.error("Error in previewNote (cached):", _e);
             }
             return;
         }
@@ -614,8 +614,8 @@ class ToneSynthEngine {
             try {
                 bundle.synth.triggerAttackRelease(note, '8n', undefined, velocity);
                 this.lastPreviewNote = { key, note };
-            } catch (e) {
-                console.error("Error in previewNote (async):", e);
+            } catch (_e) {
+                console.error("Error in previewNote (async):", _e);
             }
         }).catch(e => console.error("Error getting synth for preview:", e));
     }
@@ -625,7 +625,6 @@ class ToneSynthEngine {
      */
     async playChord(trackId: number, preset: string, notes: (number | string)[], duration: string | number, velocity: number, time?: number) {
         const ToneLib = await ensureTone() as ToneLibType;
-        const key = `${trackId}-${preset}`;
 
         // Get or create the synth
         const bundle = await this.getSynth(trackId, preset);
@@ -636,8 +635,8 @@ class ToneSynthEngine {
                 typeof n === 'number' ? new (ToneLib.Frequency as any)(n, "midi").toFrequency() : n
             );
             bundle.synth.triggerAttackRelease(freqs, duration, time, velocity);
-        } catch (e) {
-            console.error("Error playing chord:", e);
+        } catch (_e) {
+            console.error("Error playing chord:", _e);
         }
     }
 
@@ -645,7 +644,7 @@ class ToneSynthEngine {
         this.trackSynths.forEach(bundle => {
             try {
                 bundle.synth.releaseAll();
-            } catch (e) { }
+            } catch (_e) { }
         });
     }
 

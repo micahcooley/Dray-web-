@@ -124,7 +124,6 @@ export class AudioScheduler {
                 this.workletNode.port.postMessage({ type: 'start' });
 
                 console.log("AudioScheduler: Using AudioWorklet for timing");
-                workletReady = true;
             }
         } catch (e) {
             console.warn('Worklet registration failed, falling back to interval', e);
@@ -558,11 +557,11 @@ export class AudioScheduler {
         }
     }
 
-    public setLookahead(lookaheadSeconds: number) {
+    public setLookahead(_lookaheadSeconds: number) {
         // Not implemented in simplified worklet yet, can add if needed
     }
 
-    public setNotifyThreshold(threshold: number) {
+    public setNotifyThreshold(_threshold: number) {
         // Not needed for message-based
     }
 

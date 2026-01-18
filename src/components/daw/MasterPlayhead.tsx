@@ -6,10 +6,9 @@ import { usePlaybackCallback } from '../../hooks/usePlaybackTime';
 interface MasterPlayheadProps {
     pixelsPerBeat: number;
     height: number;
-    scrollLeft: number;
 }
 
-export default function MasterPlayhead({ pixelsPerBeat, height, scrollLeft }: MasterPlayheadProps) {
+export default function MasterPlayhead({ pixelsPerBeat, height }: MasterPlayheadProps) {
     const playheadRef = useRef<HTMLDivElement>(null);
 
     // High-performance direct update

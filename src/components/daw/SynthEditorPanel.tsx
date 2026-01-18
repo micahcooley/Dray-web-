@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { SYNTH_PRESETS, SynthPreset, OscillatorType, updatePreset, addPreset, findPreset } from '../../lib/presets/synthPresets';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { SynthPreset, OscillatorType, updatePreset, addPreset, findPreset } from '../../lib/presets/synthPresets';
 import { toneSynthEngine } from '../../lib/engines/synth';
 import { audioEngine } from '../../lib/audioEngine';
 
@@ -9,16 +9,22 @@ interface SynthEditorPanelProps {
 }
 
 export default function SynthEditorPanel({ presetName, onPresetChange }: SynthEditorPanelProps) {
-  const [preset, setPreset] = useState<SynthPreset | null>(null);
+  // Derive preset from presetName instead of using state
+  const basePreset = useMemo(() => {
+    const found = findPreset(presetName);
+    return found ? { ...found } : null;
+  }, [presetName]);
+
+  const [preset, setPreset] = useState<SynthPreset | null>(basePreset);
   const [previewNote, setPreviewNote] = useState<number>(60);
   const [status, setStatus] = useState<string | null>(null);
-  const saveTimer = useRef<any>(null);
-  const debouncedUpdateRef = useRef<any>(null);
+  const saveTimer = useRef<number | null>(null);
+  const debouncedUpdateRef = useRef<number | null>(null);
 
+  // Update preset when basePreset changes
   useEffect(() => {
-    const found = findPreset(presetName) || null;
-    setPreset(found ? { ...found } : null);
-  }, [presetName]);
+    setPreset(basePreset);
+  }, [basePreset]);
 
   const update = (field: keyof SynthPreset, value: any) => {
     if (!preset) return;
@@ -35,9 +41,9 @@ export default function SynthEditorPanel({ presetName, onPresetChange }: SynthEd
           addPreset({ ...(preset as SynthPreset) });
         }
         // notify synth engine to apply changes to active voices (if method exists)
-        try { (toneSynthEngine as any).applyPresetUpdate?.(preset.name, { [field]: value }); } catch (e) { /* method may not exist */ }
-      } catch (e) {
-        console.error('Failed to apply preset update', e);
+        try { (toneSynthEngine as any).applyPresetUpdate?.(preset.name, { [field]: value }); } catch (_e) { /* method may not exist */ }
+      } catch (_e) {
+        console.error('Failed to apply preset update', _e);
       }
     }, 180);
   };
@@ -53,8 +59,8 @@ export default function SynthEditorPanel({ presetName, onPresetChange }: SynthEd
     setStatus('Playing preview...');
     try {
       toneSynthEngine.playNote(-1, preset.name, previewNote, 0.5, 0.9);
-    } catch (e) {
-      console.error('Preview play error', e);
+    } catch (_e) {
+      console.error('Preview play error', _e);
       setStatus('Preview failed');
       setTimeout(() => setStatus(null), 1500);
     }
@@ -75,8 +81,8 @@ export default function SynthEditorPanel({ presetName, onPresetChange }: SynthEd
       setStatus('Preset saved');
       clearTimeout(saveTimer.current);
       saveTimer.current = setTimeout(() => setStatus(null), 1400);
-    } catch (e) {
-      console.error('Save preset failed', e);
+    } catch (_e) {
+      console.error('Save preset failed', _e);
       setStatus('Save failed');
       setTimeout(() => setStatus(null), 1400);
     }
@@ -87,7 +93,7 @@ export default function SynthEditorPanel({ presetName, onPresetChange }: SynthEd
     if (!original) return;
     setPreset({ ...original });
     // apply immediately
-    try { updatePreset(original.name, original); } catch (e) { console.error('reset apply failed', e); }
+    try { updatePreset(original.name, original); } catch (_e) { console.error('reset apply failed', _e); }
     setStatus('Reset to original');
     setTimeout(() => setStatus(null), 1200);
   };

@@ -158,7 +158,7 @@ class PitchDetector {
         this.animationFrameId = requestAnimationFrame(() => this.detect());
     }
 
-    private processNote(midiNote: number, velocity: number) {
+    private processNote(midiNote: number, _velocity: number) {
         const now = this.audioContext?.currentTime || 0;
 
         if (this.currentNote === null) {

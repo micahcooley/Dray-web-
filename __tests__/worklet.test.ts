@@ -8,18 +8,23 @@ jest.mock('../src/lib/audioEngine', () => ({
     resume: jest.fn(() => Promise.resolve()),
     getNow: jest.fn(() => 0),
     onStateChange: jest.fn(),
-    getContext: jest.fn(() => ({ currentTime: 0, decodeAudioData: async (buf: any) => ({}) })),
+    getContext: jest.fn(() => ({ currentTime: 0, decodeAudioData: async (_buf: ArrayBuffer) => ({} as AudioBuffer) })),
     registerSchedulerWorklet: jest.fn(() => {
-      const port: any = {
+      const port: MessagePort = {
         start: jest.fn(),
-        postMessage: jest.fn((msg: any) => { /* no-op */ }),
-        onmessage: null as any,
+        postMessage: jest.fn((_msg: unknown) => { /* no-op */ }),
+        onmessage: null,
+        onmessageerror: null,
+        close: jest.fn(),
+        addEventListener: jest.fn(),
+        removeEventListener: jest.fn(),
+        dispatchEvent: jest.fn(() => true),
       };
       // Simulate sending ticks to scheduler via invoking onmessage
       setTimeout(() => {
-        if (typeof port.onmessage === 'function') port.onmessage({ data: { type: 'tick', tickIndex: 0, engineTime: 0 } });
+        if (typeof port.onmessage === 'function') port.onmessage(({ data: { type: 'tick', tickIndex: 0, engineTime: 0 } } as unknown) as MessageEvent);
       }, 0);
-      return Promise.resolve({ port } as any);
+      return Promise.resolve({ port } as { port: MessagePort });
     })
   }
 }));

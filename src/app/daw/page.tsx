@@ -2,20 +2,19 @@
 
 export const dynamic = 'force-dynamic';
 
-import React, { useEffect, useState, useCallback, useRef } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 // Note: tone engines are imported dynamically to avoid creating AudioContext on module load
 
 import {
-  Play, Square, Circle, SkipBack, SkipForward,
+  Play, Square, Circle, SkipBack,
   Sparkles, Settings, Share2, Plus, ChevronDown, ChevronRight,
-  Volume2, Folder, Wand2, Send, Mic,
-  ChevronLeft, X, Music, Drum, FileAudio, Undo2, Redo2
+  Volume2, Folder, X, Music, Drum, FileAudio, Undo2, Redo2
 } from 'lucide-react';
 import { useHistory } from '../../hooks/useHistory';
 import { useProjectStore } from '../../store/useProjectStore';
 import { audioEngine } from '../../lib/audioEngine';
 import { grokService } from '../../lib/grokService';
-import { SYNTH_PRESETS } from '../../lib/synthEngine'; // Imported for presets list
+// Synth presets are available in synthEngine module
 import PianoRoll, { Note } from '../../components/daw/PianoRoll';
 import PanKnob from '../../components/daw/PanKnob';
 import VolumeMeter from '../../components/daw/VolumeMeter';
@@ -29,46 +28,10 @@ import { stemSeparator } from '../../lib/stemSeparator';
 import MasterPlayhead from '../../components/daw/MasterPlayhead';
 import AudioConversionModal from '../../components/daw/AudioConversionModal';
 import { PatternGenerators } from '../../lib/patternGenerators';
-import type { Track, Clip, MidiNote, TrackType, AudioWaveform } from '../../lib/types';
+import type { Track, Clip, MidiNote, TrackType } from '../../lib/types';
 import { SOUND_TYPE_MAP } from '../../lib/types';
 import nextDynamic from 'next/dynamic';
 const ThemeToggle = nextDynamic(() => import('../../components/ThemeToggle'), { ssr: false });
-
-// SVG Icons
-const BeatIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <rect x="2" y="6" width="4" height="12" rx="1" />
-    <rect x="10" y="3" width="4" height="18" rx="1" />
-    <rect x="18" y="8" width="4" height="8" rx="1" />
-  </svg>
-);
-
-const MelodyIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <path d="M9 18V5l12-2v13" />
-    <circle cx="6" cy="18" r="3" />
-    <circle cx="18" cy="16" r="3" />
-  </svg>
-);
-
-const MixIcon = () => (
-  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-    <line x1="4" y1="21" x2="4" y2="14" />
-    <line x1="12" y1="21" x2="12" y2="12" />
-    <line x1="20" y1="21" x2="20" y2="16" />
-    <circle cx="4" cy="12" r="2" />
-    <circle cx="12" cy="10" r="2" />
-    <circle cx="20" cy="14" r="2" />
-  </svg>
-);
-
-// Initial tracks with real MIDI data
-const formatTime = (seconds: number) => {
-  const mins = Math.floor(seconds / 60);
-  const secs = Math.floor(seconds % 60);
-  const ms = Math.floor((seconds % 1) * 1000);
-  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${ms.toString().padStart(3, '0')}`;
-};
 
 // Track colors by type
 const TRACK_COLORS = ['#eb459e', '#5865f2', '#57f287', '#fee75c', '#ed4245', '#9b59b6', '#3498db', '#1abc9c'];
@@ -236,7 +199,6 @@ export default function DAWPage() {
 
   const [selectedTrackId, setSelectedTrackId] = useState<number | null>(null);
   const [expandedCategory, setExpandedCategory] = useState<string | null>('Synths');
-  const [wingmanOpen, setWingmanOpen] = useState(true);
   const [wingmanInput, setWingmanInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [showAddTrackModal, setShowAddTrackModal] = useState(false);
@@ -244,7 +206,6 @@ export default function DAWPage() {
   const [wingmanMessages, setWingmanMessages] = useState<WingmanMessage[]>([
     { role: 'ai', text: "Hey! I'm Wingman, your AI producer. What would you like to create today?" }
   ]);
-  const [masterVolume, setMasterVolume] = useState(85);
   const [gridDivision, setGridDivision] = useState<number>(4); // 1=1/1, 2=1/2, 4=1/4, 8=1/8, 16=1/16
 
   // Context menu state
@@ -256,9 +217,6 @@ export default function DAWPage() {
 
   // Rename modal state
   const [renameModal, setRenameModal] = useState<{ trackId: number; name: string } | null>(null);
-
-  // Color picker state
-  const [colorPickerTrackId, setColorPickerTrackId] = useState<number | null>(null);
 
   const [editingTrackId, setEditingTrackId] = useState<number | null>(null);
 
@@ -722,15 +680,6 @@ export default function DAWPage() {
     });
   };
 
-  const handleSuggestionClick = (type: string) => {
-    const prompts: Record<string, string> = {
-      beat: 'Generate a hard-hitting trap beat at 140 BPM',
-      melody: 'Create a catchy melody for my track',
-      mix: 'Help me mix and master this track'
-    };
-    setWingmanInput(prompts[type] || '');
-  };
-
   const handleTrackVolumeChange = (trackId: number, volume: number) => {
     setTracks(prev => prev.map(t =>
       t.id === trackId ? { ...t, volume, meterL: volume * 85, meterR: volume * 80 } : t
@@ -820,7 +769,6 @@ export default function DAWPage() {
     setTracks(prev => prev.map(t =>
       t.id === trackId ? { ...t, color } : t
     ), 'Change track color');
-    setColorPickerTrackId(null);
     closeContextMenu();
   };
 
@@ -870,7 +818,7 @@ export default function DAWPage() {
     setDropTargetId(null);
   };
 
-  const handleDrop = (e: React.DragEvent, targetTrackId: number) => {
+  const handleDrop = async (e: React.DragEvent, targetTrackId: number) => {
     e.preventDefault();
     setDropTargetId(null);
 
@@ -885,10 +833,41 @@ export default function DAWPage() {
         return;
       }
 
-      // Audio file dropped on audio track - handle normally (could add audio import here)
+      // Audio file dropped on audio track - import audio clip
       if (file.type.startsWith('audio/') && targetTrack && targetTrack.type === 'audio') {
-        // TODO: Import audio clip to track
-        console.log('Audio file dropped on audio track - import not yet implemented');
+        try {
+          // Read file as ArrayBuffer
+          const arrayBuffer = await file.arrayBuffer();
+          
+          // Decode audio data
+          await audioEngine.initialize();
+          const audioBuffer = await audioEngine.getContext().decodeAudioData(arrayBuffer);
+          
+          // Calculate duration in beats (assuming 120 BPM, 2 beats per second)
+          const durationInSeconds = audioBuffer.duration;
+          const durationInBeats = durationInSeconds * (120 / 60); // Convert to beats
+          
+          // Create new audio clip
+          const newClip: Clip = {
+            start: 0, // Start at beginning of track
+            duration: durationInBeats,
+            name: file.name.replace(/\.[^/.]+$/, ''), // Remove file extension
+            notes: [] // Audio clips don't have notes
+          };
+          
+          // Add clip to track
+          setTracks(prev => prev.map(track => {
+            if (track.id !== targetTrackId) return track;
+            return {
+              ...track,
+              clips: [...(track.clips || []), newClip]
+            };
+          }), 'Import audio clip');
+          
+          console.log(`Imported audio clip "${newClip.name}" to track`);
+        } catch (error) {
+          console.error('Failed to import audio clip:', error);
+        }
         return;
       }
     }
@@ -1324,7 +1303,6 @@ export default function DAWPage() {
                 <div className="track-content" style={{ minHeight: '80px' }}>
                   {track.clips.map((clip, idx) => {
                     const clipWidth = clip.duration * PIXELS_PER_BEAT;
-                    const clipHeight = 68; // Track lane min-height (80) - top/bottom padding (12)
 
                     // Calculate note range for this clip
                     const notes = clip.notes || [];
@@ -1414,7 +1392,7 @@ export default function DAWPage() {
             {/* Playhead - uses animated playbackBeat for smooth movement */}
             {/* Playhead - uses animated playbackBeat for smooth movement */}
             <div style={{ position: 'absolute', top: 0, bottom: 0, left: 171, zIndex: 10, pointerEvents: 'none' }}>
-              <MasterPlayhead pixelsPerBeat={PIXELS_PER_BEAT} height={900} scrollLeft={0} />
+              <MasterPlayhead pixelsPerBeat={PIXELS_PER_BEAT} height={900} />
             </div>
           </div>
         </main>
