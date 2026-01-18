@@ -16,6 +16,7 @@ export class AudioScheduler {
     // Configuration constants
     private static readonly RETRY_DELAY_MS = 500;
     private static readonly MAX_RETRIES = 2;
+    private static readonly TOTAL_ATTEMPTS = AudioScheduler.MAX_RETRIES + 1;
 
     // Cache for audio buffers and pending loads
     private audioBufferCache = new Map<string, AudioBuffer>();
@@ -221,11 +222,11 @@ export class AudioScheduler {
 
     /**
      * Preload an audio clip with retry logic
-     * @internal Use for scheduler internal preloading only
+     * Private internal method - use preloadAudioClip() for public API
      */
     private async preloadAudioClipInternal(url: string, retryCount = 0): Promise<void> {
         // Return existing buffer immediately if cached
-        if (this.audioBufferCache.has(url)) return Promise.resolve();
+        if (this.audioBufferCache.has(url)) return;
         
         // Return existing pending load to avoid duplicate fetch/decode
         if (this.pendingLoads.has(url)) {
@@ -245,7 +246,7 @@ export class AudioScheduler {
                 // Flush any pending playback requests for this clip
                 this.flushPendingPlaybackRequests(url);
             } catch (e) {
-                console.error(`Failed to load audio clip (attempt ${retryCount + 1}/${AudioScheduler.MAX_RETRIES + 1}):`, url, e);
+                console.error(`Failed to load audio clip (attempt ${retryCount + 1}/${AudioScheduler.TOTAL_ATTEMPTS}):`, url, e);
                 
                 // Retry up to MAX_RETRIES times
                 if (retryCount < AudioScheduler.MAX_RETRIES) {
@@ -256,7 +257,7 @@ export class AudioScheduler {
                     return this.preloadAudioClipInternal(url, retryCount + 1);
                 } else {
                     // Permanently failed after retries - log but don't throw
-                    console.error(`Permanently failed to load audio clip after ${AudioScheduler.MAX_RETRIES + 1} attempts:`, url);
+                    console.error(`Permanently failed to load audio clip after ${AudioScheduler.TOTAL_ATTEMPTS} attempts:`, url);
                     // Clear any pending playback requests since we can't fulfill them
                     this.pendingPlaybackRequests.delete(url);
                 }

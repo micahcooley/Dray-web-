@@ -16,6 +16,7 @@ interface AudioEditorProps {
 const PIXELS_PER_BEAT = 40; // Base zoom
 const PREVIEW_RETRY_DELAY_MS = 500;
 const MAX_PREVIEW_RETRIES = 2;
+const TOTAL_PREVIEW_ATTEMPTS = MAX_PREVIEW_RETRIES + 1;
 
 export default function AudioEditor({ track, onTrackChange, onClose }: AudioEditorProps) {
     const { isPlaying, togglePlay: storeTogglePlay } = useProjectStore();
@@ -121,7 +122,7 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
                 previewSourceRef.current = source;
                 setIsPreviewing(true);
             } catch (e) {
-                console.error(`Failed to play audio preview (attempt ${retryCount + 1}/${MAX_PREVIEW_RETRIES + 1}):`, e);
+                console.error(`Failed to play audio preview (attempt ${retryCount + 1}/${TOTAL_PREVIEW_ATTEMPTS}):`, e);
                 
                 if (retryCount < MAX_PREVIEW_RETRIES) {
                     retryCount++;
@@ -132,7 +133,7 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
                 } else {
                     // Permanently failed
                     setIsPreviewing(false);
-                    const errorMsg = `Failed to play audio preview after ${MAX_PREVIEW_RETRIES + 1} attempts. The audio file may be corrupted or unavailable.`;
+                    const errorMsg = `Failed to play audio preview after ${TOTAL_PREVIEW_ATTEMPTS} attempts. The audio file may be corrupted or unavailable.`;
                     setPreviewError(errorMsg);
                     console.error(errorMsg);
                 }
