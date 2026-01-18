@@ -9,6 +9,7 @@ class AudioEngine {
   private currentLatencyHint: 'interactive' | 'balanced' | 'playback' = 'playback';
   private currentLookAhead = 0.1;
   private static contextCreationCount = 0;
+  private static hasWarnedMultipleContexts = false;
 
   // Track channels for mixing
   private trackChannels = new Map<number, any>();
@@ -48,12 +49,13 @@ class AudioEngine {
         this.context = new AudioContextClass({ latencyHint: this.currentLatencyHint });
         AudioEngine.contextCreationCount++;
         
-        // Debug assertion: warn if multiple contexts are created
-        if (AudioEngine.contextCreationCount > 1) {
+        // Debug assertion: warn once if multiple contexts are created
+        if (AudioEngine.contextCreationCount > 1 && !AudioEngine.hasWarnedMultipleContexts) {
           console.warn(
             `[AudioEngine] Multiple AudioContext instances detected! Count: ${AudioEngine.contextCreationCount}`,
             'This may cause timing issues and resource waste.'
           );
+          AudioEngine.hasWarnedMultipleContexts = true;
         }
       }
 

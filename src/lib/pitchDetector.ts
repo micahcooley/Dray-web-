@@ -31,6 +31,9 @@ class PitchDetector {
     private buffer: Float32Array | null = null;
     private isRunning = false;
     private animationFrameId: number | null = null;
+    
+    // Cache constant audio context properties
+    private sampleRate: number = 44100; // Default, will be updated on initialize
 
     // Callbacks
     private onPitchCallback: ((result: PitchResult | null) => void) | null = null;
@@ -61,6 +64,9 @@ class PitchDetector {
 
             await audioEngine.initialize();
             const audioContext = audioEngine.getContext();
+            
+            // Cache constant properties for performance
+            this.sampleRate = audioContext.sampleRate;
 
             // Create analyser node
             this.analyser = audioContext.createAnalyser();
@@ -128,7 +134,7 @@ class PitchDetector {
         const rms = this.calculateRMS(this.buffer as any);
 
         if (rms > 0.01) { // Threshold for silence
-            const pitch = this.detectPitch(this.buffer as any, audioEngine.getContext().sampleRate);
+            const pitch = this.detectPitch(this.buffer as any, this.sampleRate);
 
             if (pitch && pitch.confidence > this.confidenceThreshold) {
                 // Smooth the pitch using a buffer
@@ -174,7 +180,9 @@ class PitchDetector {
 
     private endCurrentNote() {
         if (this.currentNote !== null) {
-            const now = audioEngine.getContext().currentTime;
+            // Get context once at the beginning for consistent timing
+            const ctx = audioEngine.getContext();
+            const now = ctx.currentTime;
             const duration = now - this.noteStartTime;
 
             if (duration >= this.minNoteDuration) {
