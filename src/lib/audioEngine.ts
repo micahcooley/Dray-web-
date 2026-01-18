@@ -13,6 +13,9 @@ class AudioEngine {
   private trackChannels = new Map<number, any>();
   private pendingTrackStates = new Map<number, { volume?: number; pan?: number }>();
 
+  // Diagnostic: track context creation attempts
+  private static contextCreationCount = 0;
+
   private constructor() { }
 
   public static getInstance(): AudioEngine {
@@ -43,8 +46,15 @@ class AudioEngine {
       // 2. CRITICAL: Manually create the Context to ensure it's NATIVE.
       // This bypasses any Tone.js wrappers that might fail AudioWorkletNode type checks.
       if (!this.context) {
+        AudioEngine.contextCreationCount++;
+        if (AudioEngine.contextCreationCount > 1) {
+          console.warn(`⚠️ WARNING: Multiple AudioContext creation detected! Count: ${AudioEngine.contextCreationCount}. This should not happen with singleton pattern.`);
+        }
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         this.context = new AudioContextClass({ latencyHint: this.currentLatencyHint });
+        if (process.env.NODE_ENV === 'development') {
+          console.log(`✓ AudioEngine: Created AudioContext #${AudioEngine.contextCreationCount}`);
+        }
       }
 
       // 3. Inject this native context into Tone.js
@@ -84,7 +94,9 @@ class AudioEngine {
   }
 
   public getContext(): AudioContext {
-    if (!this.context) throw new Error('AudioEngine not initialized (Context is null)');
+    if (!this.context) {
+      throw new Error('AudioEngine not initialized. Call audioEngine.initialize() first before accessing context.');
+    }
     return this.context;
   }
 
@@ -224,6 +236,16 @@ class AudioEngine {
     } catch (e) {
       console.error('Failed to play test tone:', e);
     }
+  }
+
+  // Diagnostic method to check context health
+  public getContextInfo(): { count: number; state: string | null; sampleRate: number | null; isInitialized: boolean } {
+    return {
+      count: AudioEngine.contextCreationCount,
+      state: this.context?.state || null,
+      sampleRate: this.context?.sampleRate || null,
+      isInitialized: this._isInitialized
+    };
   }
 
   public async requestPermissions(): Promise<boolean> {

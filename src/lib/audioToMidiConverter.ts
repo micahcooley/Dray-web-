@@ -1,5 +1,6 @@
 'use client';
 
+import { audioEngine } from './audioEngine';
 import type { MidiNote } from './types';
 
 /**
@@ -28,15 +29,12 @@ type ConversionMode = 'melody' | 'harmony' | 'drums';
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 class AudioToMidiConverter {
-    private audioContext: AudioContext | null = null;
-
     async initialize() {
-        if (!this.audioContext) {
-            this.audioContext = new AudioContext();
-        }
-        if (this.audioContext.state === 'suspended') {
-            await this.audioContext.resume();
-        }
+        await audioEngine.initialize();
+    }
+
+    private getAudioContext(): AudioContext {
+        return audioEngine.getContext();
     }
 
     /**
@@ -56,7 +54,7 @@ class AudioToMidiConverter {
             audioBuffer = audioFile;
         } else {
             const arrayBuffer = await audioFile.arrayBuffer();
-            audioBuffer = await this.audioContext!.decodeAudioData(arrayBuffer);
+            audioBuffer = await this.getAudioContext().decodeAudioData(arrayBuffer);
         }
 
         onProgress?.({ stage: 'Analyzing...', progress: 20 });
