@@ -109,8 +109,8 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
             source.start();
             previewSourceRef.current = source;
             setIsPreviewing(true);
-        } catch (_e) {
-            console.error('Failed to play audio preview:', e);
+        } catch (error) {
+            console.error('Failed to play audio preview:', error);
             setIsPreviewing(false);
         }
     };

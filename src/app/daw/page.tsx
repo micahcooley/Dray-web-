@@ -769,7 +769,6 @@ export default function DAWPage() {
     setTracks(prev => prev.map(t =>
       t.id === trackId ? { ...t, color } : t
     ), 'Change track color');
-    setColorPickerTrackId(null);
     closeContextMenu();
   };
 
@@ -819,7 +818,7 @@ export default function DAWPage() {
     setDropTargetId(null);
   };
 
-  const handleDrop = (e: React.DragEvent, targetTrackId: number) => {
+  const handleDrop = async (e: React.DragEvent, targetTrackId: number) => {
     e.preventDefault();
     setDropTargetId(null);
 
@@ -1393,7 +1392,7 @@ export default function DAWPage() {
             {/* Playhead - uses animated playbackBeat for smooth movement */}
             {/* Playhead - uses animated playbackBeat for smooth movement */}
             <div style={{ position: 'absolute', top: 0, bottom: 0, left: 171, zIndex: 10, pointerEvents: 'none' }}>
-              <MasterPlayhead pixelsPerBeat={PIXELS_PER_BEAT} height={900} scrollLeft={0} />
+              <MasterPlayhead pixelsPerBeat={PIXELS_PER_BEAT} height={900} />
             </div>
           </div>
         </main>

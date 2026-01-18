@@ -15,7 +15,7 @@ jest.mock('../src/lib/audioEngine', () => ({
         onmessage: null,
         close: jest.fn()
       };
-      setTimeout(() => port.onmessage && port.onmessage({ data: { type: 'tick', tickIndex: 0, engineTime: 1.5 } } as MessageEvent));
+      setTimeout(() => port.onmessage && port.onmessage(({ data: { type: 'tick', tickIndex: 0, engineTime: 1.5 } } as unknown) as MessageEvent));
       return Promise.resolve({ port: port as MessagePort });
     }),
     onStateChange: jest.fn()

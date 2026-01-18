@@ -22,9 +22,9 @@ jest.mock('../src/lib/audioEngine', () => ({
       };
       // Simulate sending ticks to scheduler via invoking onmessage
       setTimeout(() => {
-        if (typeof port.onmessage === 'function') port.onmessage({ data: { type: 'tick', tickIndex: 0, engineTime: 0 } });
+        if (typeof port.onmessage === 'function') port.onmessage(({ data: { type: 'tick', tickIndex: 0, engineTime: 0 } } as unknown) as MessageEvent);
       }, 0);
-      return Promise.resolve({ port } as any);
+      return Promise.resolve({ port } as { port: MessagePort });
     })
   }
 }));

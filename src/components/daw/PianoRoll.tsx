@@ -421,7 +421,7 @@ export default function PianoRoll({
 
   // Sync notes to scheduler if playing in scoped mode
   useEffect(() => {
-    if (isPlaying && audioScheduler.scopedTrackId === trackId) {
+    if (isPlaying) {
       audioScheduler.setScopedMode(notes, trackId, instrument || '', trackType);
     }
   }, [notes, isPlaying, trackId, instrument, trackType]);

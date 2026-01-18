@@ -28,8 +28,8 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             const devices = await audioEngine.getAudioDevices();
             setOutputs(devices.filter(d => d.kind === 'audiooutput'));
             setInputs(devices.filter(d => d.kind === 'audioinput'));
-        } catch (_e) {
-            console.error("Failed to load devices", e);
+        } catch (error) {
+            console.error("Failed to load devices", error);
         }
     };
 
