@@ -8,6 +8,8 @@ class AudioEngine {
   private initializationPromise: Promise<void> | null = null;
   private currentLatencyHint: 'interactive' | 'balanced' | 'playback' = 'playback';
   private currentLookAhead = 0.1;
+  private static contextCreationCount = 0;
+  private static hasWarnedMultipleContexts = false;
 
   // Track channels for mixing
   private trackChannels = new Map<number, any>();
@@ -45,6 +47,16 @@ class AudioEngine {
       if (!this.context) {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         this.context = new AudioContextClass({ latencyHint: this.currentLatencyHint });
+        AudioEngine.contextCreationCount++;
+        
+        // Debug assertion: warn once if multiple contexts are created
+        if (AudioEngine.contextCreationCount > 1 && !AudioEngine.hasWarnedMultipleContexts) {
+          console.warn(
+            `[AudioEngine] Multiple AudioContext instances detected! Count: ${AudioEngine.contextCreationCount}`,
+            'This may cause timing issues and resource waste.'
+          );
+          AudioEngine.hasWarnedMultipleContexts = true;
+        }
       }
 
       // 3. Inject this native context into Tone.js
@@ -252,6 +264,23 @@ class AudioEngine {
     // Performance settings are applied on next context creation
     // Store for future use
     console.log('Performance settings updated:', { latencyHint, lookAhead });
+  }
+
+  // Debug utility: Get the count of AudioContext creations
+  public static getContextCreationCount(): number {
+    return AudioEngine.contextCreationCount;
+  }
+
+  // Debug utility: Assert only one context exists
+  public static assertSingleContext(): boolean {
+    if (AudioEngine.contextCreationCount > 1) {
+      console.error(
+        `[AudioEngine] ASSERTION FAILED: Multiple AudioContext instances created (${AudioEngine.contextCreationCount})!`,
+        'Only one AudioContext should exist for the entire application.'
+      );
+      return false;
+    }
+    return true;
   }
 
   // REGISTER SCHEDULER WORKLET
