@@ -14,6 +14,9 @@ interface AudioEditorProps {
 }
 
 const PIXELS_PER_BEAT = 40; // Base zoom
+const PREVIEW_RETRY_DELAY_MS = 500;
+const MAX_PREVIEW_RETRIES = 2;
+const TOTAL_PREVIEW_ATTEMPTS = MAX_PREVIEW_RETRIES + 1;
 
 export default function AudioEditor({ track, onTrackChange, onClose }: AudioEditorProps) {
     const { isPlaying, togglePlay: storeTogglePlay } = useProjectStore();
@@ -24,6 +27,7 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
 
     // Preview playback state
     const [isPreviewing, setIsPreviewing] = useState(false);
+    const [previewError, setPreviewError] = useState<string | null>(null);
     const previewSourceRef = useRef<AudioBufferSourceNode | null>(null);
 
     const selectedClip = useMemo(() =>
@@ -80,39 +84,63 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
 
         // Stop any existing preview
         handlePreviewStop();
+        setPreviewError(null);
 
-        try {
-            await audioEngine.initialize();
-            const ctx = audioEngine.getContext();
+        const url = (selectedClip as any).url;
+        let retryCount = 0;
 
-            // Fetch and decode the audio
-            const response = await fetch((selectedClip as any).url);
-            const arrayBuffer = await response.arrayBuffer();
-            const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+        const attemptPlay = async (): Promise<void> => {
+            try {
+                await audioEngine.initialize();
+                const ctx = audioEngine.getContext();
 
-            // Create source and play
-            const source = ctx.createBufferSource();
-            source.buffer = audioBuffer;
-            source.connect(ctx.destination);
+                // Fetch and decode the audio with retry logic
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                const arrayBuffer = await response.arrayBuffer();
+                const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
 
-            // Apply pitch shift if specified
-            const pitch = (selectedClip as any).pitch ?? 0;
-            if (pitch !== 0) {
-                source.playbackRate.value = Math.pow(2, pitch / 12);
+                // Create source and play
+                const source = ctx.createBufferSource();
+                source.buffer = audioBuffer;
+                source.connect(ctx.destination);
+
+                // Apply pitch shift if specified
+                const pitch = (selectedClip as any).pitch ?? 0;
+                if (pitch !== 0) {
+                    source.playbackRate.value = Math.pow(2, pitch / 12);
+                }
+
+                source.onended = () => {
+                    setIsPreviewing(false);
+                    previewSourceRef.current = null;
+                };
+
+                source.start();
+                previewSourceRef.current = source;
+                setIsPreviewing(true);
+            } catch (e) {
+                console.error(`Failed to play audio preview (attempt ${retryCount + 1}/${TOTAL_PREVIEW_ATTEMPTS}):`, e);
+                
+                if (retryCount < MAX_PREVIEW_RETRIES) {
+                    retryCount++;
+                    console.log(`Retrying preview playback (${retryCount}/${MAX_PREVIEW_RETRIES})...`);
+                    // Wait before retrying with exponential backoff
+                    await new Promise(resolve => setTimeout(resolve, PREVIEW_RETRY_DELAY_MS * retryCount));
+                    return attemptPlay();
+                } else {
+                    // Permanently failed
+                    setIsPreviewing(false);
+                    const errorMsg = `Failed to play audio preview after ${TOTAL_PREVIEW_ATTEMPTS} attempts. The audio file may be corrupted or unavailable.`;
+                    setPreviewError(errorMsg);
+                    console.error(errorMsg);
+                }
             }
+        };
 
-            source.onended = () => {
-                setIsPreviewing(false);
-                previewSourceRef.current = null;
-            };
-
-            source.start();
-            previewSourceRef.current = source;
-            setIsPreviewing(true);
-        } catch (e) {
-            console.error('Failed to play audio preview:', e);
-            setIsPreviewing(false);
-        }
+        await attemptPlay();
     };
 
     const handlePreviewStop = () => {
@@ -230,6 +258,29 @@ export default function AudioEditor({ track, onTrackChange, onClose }: AudioEdit
                         <button className={styles.closeBtn} onClick={onClose}><X size={18} /></button>
                     </div>
                 </div>
+
+                {/* Error message display */}
+                {previewError && (
+                    <div style={{
+                        padding: '8px 12px',
+                        margin: '0 12px',
+                        background: '#ed4245',
+                        color: '#fff',
+                        borderRadius: 4,
+                        fontSize: '0.85rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'space-between'
+                    }}>
+                        <span>{previewError}</span>
+                        <button
+                            onClick={() => setPreviewError(null)}
+                            style={{ background: 'transparent', border: 'none', color: '#fff', cursor: 'pointer', padding: 4 }}
+                        >
+                            <X size={16} />
+                        </button>
+                    </div>
+                )}
 
                 {/* Editor Controls */}
                 <div className={styles.controls}>

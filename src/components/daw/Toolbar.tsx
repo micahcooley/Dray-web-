@@ -1,10 +1,14 @@
 'use client';
 
 import React from 'react';
-import { Play, Square, Circle, Sparkles, Settings, Share2 } from 'lucide-react';
+import { motion } from 'framer-motion';
+import { Play, Square, Circle, Sparkles, Settings, Share2, Undo2, Redo2 } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { usePlaybackTime } from '../../hooks/usePlaybackTime';
 import { audioEngine } from '../../lib/audioEngine';
+import dynamic from 'next/dynamic';
+
+const ThemeToggle = dynamic(() => import('../ThemeToggle'), { ssr: false });
 
 // Format seconds to MM:SS:mmm
 function formatTime(seconds: number): string {
@@ -14,7 +18,29 @@ function formatTime(seconds: number): string {
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${ms.toString().padStart(3, '0')}`;
 }
 
-export default function Toolbar() {
+interface ToolbarProps {
+  onSettingsClick: () => void;
+  onWingmanClick: () => void;
+  onShareClick?: () => void;
+  undo: () => void;
+  redo: () => void;
+  canUndo: boolean;
+  canRedo: boolean;
+  gridDivision: number;
+  setGridDivision: (val: number) => void;
+}
+
+export default function Toolbar({
+  onSettingsClick,
+  onWingmanClick,
+  onShareClick,
+  undo,
+  redo,
+  canUndo,
+  canRedo,
+  gridDivision,
+  setGridDivision
+}: ToolbarProps) {
   const { isPlaying, togglePlay, activeProject } = useProjectStore();
   const playbackTime = usePlaybackTime();
 
@@ -22,8 +48,30 @@ export default function Toolbar() {
     if (!isPlaying) {
       await audioEngine.initialize();
       await audioEngine.resume();
+
+      try {
+        const engines = await import('../../lib/toneEngine');
+        await Promise.all([
+          engines.toneSynthEngine.initialize(),
+          engines.toneDrumMachine.initialize(),
+          engines.toneBassEngine.initialize(),
+          engines.toneKeysEngine.initialize(),
+          engines.toneVocalEngine.initialize(),
+          engines.toneFXEngine.initialize()
+        ]);
+      } catch (e) {
+        console.warn('Failed to start engines:', e);
+      }
     } else {
-      await audioEngine.suspend();
+      try {
+        const engines = await import('../../lib/toneEngine');
+        engines.toneSynthEngine.stopAll();
+        engines.toneBassEngine.stopAll();
+        engines.toneKeysEngine.stopAll();
+        engines.toneVocalEngine.stopAll();
+      } catch (e) {
+        console.warn('Failed to stop engines:', e);
+      }
     }
     togglePlay();
   };
@@ -31,19 +79,70 @@ export default function Toolbar() {
   return (
     <div className="toolbar glass">
       <div className="toolbar-section">
+        <div className="logo" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginRight: '1rem' }}>
+          <Sparkles size={20} style={{ color: '#5865f2' }} />
+          <span style={{ fontWeight: 800, fontSize: '1.2rem', background: 'linear-gradient(135deg, #5865f2, #eb459e)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>Drey</span>
+        </div>
         <div className="project-info">
           <span className="project-name">{activeProject?.name || 'Untitled Project'}</span>
           <span className="project-version">v1.2</span>
         </div>
+
+        <div className="history-controls">
+          <motion.button
+            className={`history-btn ${!canUndo ? 'disabled' : ''}`}
+            onClick={undo}
+            disabled={!canUndo}
+            title="Undo (Ctrl+Z)"
+            whileHover={canUndo ? { scale: 1.1, backgroundColor: 'var(--border-bright)' } : {}}
+            whileTap={canUndo ? { scale: 0.95 } : {}}
+          >
+            <Undo2 size={16} />
+          </motion.button>
+          <motion.button
+            className={`history-btn ${!canRedo ? 'disabled' : ''}`}
+            onClick={redo}
+            disabled={!canRedo}
+            title="Redo (Ctrl+Shift+Z)"
+            whileHover={canRedo ? { scale: 1.1, backgroundColor: 'var(--border-bright)' } : {}}
+            whileTap={canRedo ? { scale: 0.95 } : {}}
+          >
+            <Redo2 size={16} />
+          </motion.button>
+        </div>
+
+        <div className="grid-controls">
+          <select
+            className="grid-select"
+            value={gridDivision}
+            onChange={(e) => setGridDivision(Number(e.target.value))}
+            title="Grid Division"
+          >
+            <option value={1}>1/1</option>
+            <option value={2}>1/2</option>
+            <option value={4}>1/4</option>
+            <option value={8}>1/8</option>
+            <option value={16}>1/16</option>
+          </select>
+        </div>
       </div>
 
       <div className="toolbar-section transport">
-        <button className="tool-btn" onClick={handleTogglePlay}>
+        <motion.button
+          className="tool-btn"
+          onClick={handleTogglePlay}
+          whileHover={{ scale: 1.1, backgroundColor: 'rgba(255,255,255,0.1)' }}
+          whileTap={{ scale: 0.95 }}
+        >
           {isPlaying ? <Square size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
-        </button>
-        <button className="tool-btn record">
+        </motion.button>
+        <motion.button
+          className="tool-btn record"
+          whileHover={{ scale: 1.1, backgroundColor: 'rgba(255,77,77,0.1)' }}
+          whileTap={{ scale: 0.95 }}
+        >
           <Circle size={18} fill="currentColor" />
-        </button>
+        </motion.button>
         <div className="time-display">
           <span className="time-value">{formatTime(playbackTime)}</span>
           <span className="tempo-value">{activeProject?.tempo || 120} BPM</span>
@@ -51,12 +150,31 @@ export default function Toolbar() {
       </div>
 
       <div className="toolbar-section actions">
-        <button className="btn-wingman">
+        <ThemeToggle />
+        <motion.button
+          className="btn-wingman"
+          onClick={onWingmanClick}
+          whileHover={{ scale: 1.05, boxShadow: '0 0 20px rgba(235, 69, 158, 0.4)' }}
+          whileTap={{ scale: 0.95 }}
+        >
           <Sparkles size={16} /> Wingman AI
-        </button>
-        <button className="tool-btn"><Settings size={18} /></button>
-        <button className="tool-btn"><Share2 size={18} /></button>
-        <button className="btn-zenith">Open in Zenith</button>
+        </motion.button>
+        <motion.button
+          className="tool-btn"
+          onClick={onSettingsClick}
+          whileHover={{ scale: 1.1, rotate: 90 }}
+          whileTap={{ scale: 0.9 }}
+        >
+          <Settings size={18} />
+        </motion.button>
+        <motion.button
+          className="tool-btn"
+          onClick={onShareClick}
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
+        >
+          <Share2 size={18} />
+        </motion.button>
       </div>
 
       <style jsx>{`
@@ -68,6 +186,7 @@ export default function Toolbar() {
           padding: 0 1.5rem;
           margin-bottom: 2px;
           border-bottom: 1px solid var(--border-subtle);
+          background: var(--bg-surface);
         }
         .toolbar-section {
           display: flex;
@@ -86,6 +205,35 @@ export default function Toolbar() {
           font-size: 0.75rem;
           color: var(--text-dim);
         }
+        .history-controls { display: flex; gap: 4px; margin-left: 0.5rem; }
+        .history-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 28px;
+          height: 28px;
+          background: var(--border-subtle);
+          border: 1px solid var(--border-bright);
+          border-radius: 4px;
+          color: var(--text-dim);
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .history-btn:hover:not(.disabled) { color: var(--text-bright); border-color: var(--accent-primary); }
+        .history-btn.disabled { opacity: 0.3; cursor: not-allowed; }
+        .grid-controls { margin-left: 0.25rem; }
+        .grid-select {
+          background: var(--border-subtle);
+          border: 1px solid var(--border-bright);
+          border-radius: 4px;
+          color: var(--text-dim);
+          padding: 4px 8px;
+          font-size: 0.7rem;
+          cursor: pointer;
+          outline: none;
+        }
+        .grid-select:hover { border-color: var(--accent-primary); color: var(--text-bright); }
+        .grid-select:focus { border-color: var(--accent-primary); }
         .transport {
           gap: 0.5rem;
         }
@@ -99,11 +247,7 @@ export default function Toolbar() {
           align-items: center;
           justify-content: center;
           border-radius: var(--radius-sm);
-          transition: background 0.2s;
-        }
-        .tool-btn:hover {
-          background: var(--bg-surface);
-          color: var(--accent-primary);
+          cursor: pointer;
         }
         .tool-btn.record:hover {
           color: #ff4d4d;
@@ -139,15 +283,7 @@ export default function Toolbar() {
           align-items: center;
           gap: 0.5rem;
           box-shadow: 0 0 15px rgba(235, 69, 158, 0.2);
-        }
-        .btn-zenith {
-          background: rgba(255, 255, 255, 0.05);
-          border: 1px solid var(--border-subtle);
-          color: var(--text-main);
-          padding: 0.5rem 0.75rem;
-          border-radius: var(--radius-md);
-          font-size: 0.75rem;
-          font-weight: 600;
+          cursor: pointer;
         }
       `}</style>
     </div>

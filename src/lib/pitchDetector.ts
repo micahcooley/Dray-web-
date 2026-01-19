@@ -25,13 +25,15 @@ export interface MIDINoteEvent {
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 class PitchDetector {
-    private audioContext: AudioContext | null = null;
     private analyser: AnalyserNode | null = null;
     private mediaStream: MediaStream | null = null;
     private source: MediaStreamAudioSourceNode | null = null;
     private buffer: Float32Array | null = null;
     private isRunning = false;
     private animationFrameId: number | null = null;
+    
+    // Cache constant audio context properties
+    private sampleRate: number = 44100; // Default, will be updated on initialize
 
     // Callbacks
     private onPitchCallback: ((result: PitchResult | null) => void) | null = null;
@@ -61,15 +63,18 @@ class PitchDetector {
             });
 
             await audioEngine.initialize();
-            this.audioContext = audioEngine.getContext();
+            const audioContext = audioEngine.getContext();
+            
+            // Cache constant properties for performance
+            this.sampleRate = audioContext.sampleRate;
 
             // Create analyser node
-            this.analyser = this.audioContext.createAnalyser();
+            this.analyser = audioContext.createAnalyser();
             this.analyser.fftSize = 2048;
             this.analyser.smoothingTimeConstant = 0.85;
 
             // Connect microphone to analyser
-            this.source = this.audioContext.createMediaStreamSource(this.mediaStream);
+            this.source = audioContext.createMediaStreamSource(this.mediaStream);
             this.source.connect(this.analyser);
 
             // Create buffer for audio data
@@ -107,8 +112,9 @@ class PitchDetector {
     }
 
     startRecording() {
+        const ctx = audioEngine.getContext();
         this.recordedNotes = [];
-        this.recordingStartTime = this.audioContext?.currentTime || 0;
+        this.recordingStartTime = ctx.currentTime;
         this.isRecording = true;
     }
 
@@ -129,7 +135,7 @@ class PitchDetector {
         const rms = this.calculateRMS(this.buffer as any);
 
         if (rms > 0.01) { // Threshold for silence
-            const pitch = this.detectPitch(this.buffer as any, this.audioContext!.sampleRate);
+            const pitch = this.detectPitch(this.buffer as any, this.sampleRate);
 
             if (pitch && pitch.confidence > this.confidenceThreshold) {
                 // Smooth the pitch using a buffer
@@ -159,7 +165,8 @@ class PitchDetector {
     }
 
     private processNote(midiNote: number, velocity: number) {
-        const now = this.audioContext?.currentTime || 0;
+        const ctx = audioEngine.getContext();
+        const now = ctx.currentTime;
 
         if (this.currentNote === null) {
             // Start new note
@@ -174,8 +181,10 @@ class PitchDetector {
     }
 
     private endCurrentNote() {
-        if (this.currentNote !== null && this.audioContext) {
-            const now = this.audioContext.currentTime;
+        if (this.currentNote !== null) {
+            // Get context once at the beginning for consistent timing
+            const ctx = audioEngine.getContext();
+            const now = ctx.currentTime;
             const duration = now - this.noteStartTime;
 
             if (duration >= this.minNoteDuration) {
@@ -306,8 +315,6 @@ class PitchDetector {
             this.mediaStream.getTracks().forEach(track => track.stop());
             this.mediaStream = null;
         }
-
-        this.audioContext = null;
     }
 }
 

@@ -12,10 +12,24 @@ export class AudioScheduler {
     private current16thNote = 0;
     private startTime = 0;
     private startOffset = 0;
+    
+    // Configuration constants
+    private static readonly RETRY_DELAY_MS = 500;
+    private static readonly MAX_RETRIES = 2;
+    private static readonly TOTAL_ATTEMPTS = AudioScheduler.MAX_RETRIES + 1;
 
     // Cache for audio buffers and pending loads
     private audioBufferCache = new Map<string, AudioBuffer>();
-    private pendingLoads = new Set<string>();
+    private pendingLoads = new Map<string, Promise<void>>();
+    
+    // Queue for playback requests when buffer is not ready
+    private pendingPlaybackRequests = new Map<string, Array<{
+        time: number;
+        volume: number;
+        pan: number;
+        semitones: number;
+        trackId: number;
+    }>>();
 
     // Keys for scheduled events (tick-based) to avoid float precision issues
     private scheduledNotes = new Set<string>();
@@ -79,13 +93,15 @@ export class AudioScheduler {
         this.tracksCache = store.tracks;
         this.tempoCache = store.activeProject?.tempo || 120;
 
-        this.preloadProjectClips(this.tracksCache);
+        // Await all clips to be preloaded before starting playback
+        await this.preloadProjectClips(this.tracksCache);
 
         this.storeUnsubscribe = useProjectStore.subscribe((state) => {
             if (this.tracksCache !== state.tracks) {
                 this.tracksCache = state.tracks;
                 this.cacheInstruments(state.tracks);
-                this.preloadProjectClips(state.tracks);
+                // Preload new clips asynchronously (don't block)
+                void this.preloadProjectClips(state.tracks);
             }
             const newTempo = state.activeProject?.tempo || 120;
             if (newTempo !== this.tempoCache) this.setTempo(newTempo);
@@ -151,10 +167,6 @@ export class AudioScheduler {
     private scheduler() {
         if (!this.isRunning()) return;
 
-        // Debug log to confirm scheduler heartbeat
-        // Debug log to confirm scheduler heartbeat
-        if (Math.random() < 0.01) console.log("Scheduler heartbeat", this.nextNoteTime, audioEngine.getNow(), this.isRunning());
-
         // While there are notes that will need to play before the next interval
         // Lookahead scheduler loop
         try {
@@ -216,40 +228,125 @@ export class AudioScheduler {
     // Worklet message handler refactored to drive the loop
     private handleWorkletMessage(msg: any) {
         if (msg.type === 'tick') {
-            // Log sample of ticks to verify flow
-            if (Math.random() < 0.005) {
-                console.log("[AudioScheduler] Received tick from Worklet", msg.time);
-            }
             // Worklet says "wake up", so we run the scheduler
             this.scheduler();
         }
     }
 
-    public async preloadAudioClip(url: string) {
+    /**
+     * Preload an audio clip with retry logic
+     * Private internal method - use preloadAudioClip() for public API
+     */
+    private async preloadAudioClipInternal(url: string, retryCount = 0): Promise<void> {
+        // Return existing buffer immediately if cached
         if (this.audioBufferCache.has(url)) return;
-        if (this.pendingLoads.has(url)) return;
-
-        this.pendingLoads.add(url);
-        try {
-            const response = await fetch(url);
-            const arrayBuffer = await response.arrayBuffer();
-            const audioBuffer = await audioEngine.getContext().decodeAudioData(arrayBuffer);
-            this.audioBufferCache.set(url, audioBuffer);
-        } catch (e) {
-            console.error('Failed to load audio clip:', url, e);
-        } finally {
-            this.pendingLoads.delete(url);
+        
+        // Return existing pending load to avoid duplicate fetch/decode
+        if (this.pendingLoads.has(url)) {
+            return this.pendingLoads.get(url)!;
         }
+
+        const loadPromise = (async () => {
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                const arrayBuffer = await response.arrayBuffer();
+                const audioBuffer = await audioEngine.getContext().decodeAudioData(arrayBuffer);
+                this.audioBufferCache.set(url, audioBuffer);
+                
+                // Flush any pending playback requests for this clip
+                this.flushPendingPlaybackRequests(url);
+            } catch (e) {
+                console.error(`Failed to load audio clip (attempt ${retryCount + 1}/${AudioScheduler.TOTAL_ATTEMPTS}):`, url, e);
+                
+                // Retry up to MAX_RETRIES times
+                if (retryCount < AudioScheduler.MAX_RETRIES) {
+                    console.log(`Retrying decode for ${url}...`);
+                    this.pendingLoads.delete(url);
+                    // Wait a bit before retrying with exponential backoff
+                    await new Promise(resolve => setTimeout(resolve, AudioScheduler.RETRY_DELAY_MS * (retryCount + 1)));
+                    return this.preloadAudioClipInternal(url, retryCount + 1);
+                } else {
+                    // Permanently failed after retries - log but don't throw
+                    console.error(`Permanently failed to load audio clip after ${AudioScheduler.TOTAL_ATTEMPTS} attempts:`, url);
+                    // Clear any pending playback requests since we can't fulfill them
+                    this.pendingPlaybackRequests.delete(url);
+                }
+            } finally {
+                this.pendingLoads.delete(url);
+            }
+        })();
+        
+        this.pendingLoads.set(url, loadPromise);
+        return loadPromise;
+    }
+    
+    /**
+     * Public API to preload an audio clip
+     */
+    public async preloadAudioClip(url: string): Promise<void> {
+        return this.preloadAudioClipInternal(url, 0);
     }
 
-    private preloadProjectClips(tracks: Track[]) {
+    private async preloadProjectClips(tracks: Track[]): Promise<void> {
+        const clipUrls: string[] = [];
+        
         for (let i = 0; i < tracks.length; i++) {
             const track = tracks[i];
             for (let j = 0; j < track.clips.length; j++) {
                 const clip: any = track.clips[j];
-                if (clip.audioUrl) this.preloadAudioClip(clip.audioUrl);
+                if (clip.audioUrl && !this.audioBufferCache.has(clip.audioUrl)) {
+                    clipUrls.push(clip.audioUrl);
+                }
             }
         }
+        
+        if (clipUrls.length === 0) return Promise.resolve();
+        
+        console.log(`Preloading ${clipUrls.length} audio clips...`);
+        
+        // Load all clips in parallel
+        const loadPromises = clipUrls.map(url => 
+            this.preloadAudioClip(url).catch(err => {
+                console.error(`Failed to preload clip ${url}:`, err);
+                // Don't let one failure stop the rest
+                return Promise.resolve();
+            })
+        );
+        
+        await Promise.all(loadPromises);
+        console.log(`Preloaded ${clipUrls.length} audio clips successfully`);
+    }
+    
+    /**
+     * Flush pending playback requests for a URL once it's loaded
+     */
+    private flushPendingPlaybackRequests(url: string) {
+        const pending = this.pendingPlaybackRequests.get(url);
+        if (!pending || pending.length === 0) return;
+        
+        console.log(`Flushing ${pending.length} pending playback requests for ${url}`);
+        
+        for (const req of pending) {
+            // Check if scheduled time has passed
+            const now = audioEngine.getNow();
+            if (req.time < now) {
+                // Time has passed, schedule at next available grid slot
+                const bpm = this.tempoCache;
+                const secondsPerBeat = 60.0 / bpm;
+                const secondsPer16th = 0.25 * secondsPerBeat;
+                const nextGridTime = now + secondsPer16th;
+                console.log(`Rescheduling delayed audio from ${req.time} to ${nextGridTime}`);
+                this.triggerAudio(url, nextGridTime, req.volume, req.pan, req.semitones, req.trackId);
+            } else {
+                // Still in future, trigger normally
+                this.triggerAudio(url, req.time, req.volume, req.pan, req.semitones, req.trackId);
+            }
+        }
+        
+        this.pendingPlaybackRequests.delete(url);
     }
 
     private cacheInstruments(tracks: Track[]) {
@@ -407,7 +504,7 @@ export class AudioScheduler {
                     if (noteDiff >= 0 && noteDiff < stepSize) {
                         const key = `${tickIndex}:${track.id}:${note.id}`;
                         if (!this.scheduledNotes.has(key)) {
-                            console.log(`[AudioScheduler] Scheduled Note! Track ${track.id} Pitch ${note.pitch} @ ${time.toFixed(3)}s`);
+                            // console.log(`[AudioScheduler] Scheduled Note! Track ${track.id} Pitch ${note.pitch} @ ${time.toFixed(3)}s`);
                             this.scheduledNotes.add(key);
                             const noteTimeOffset = noteDiff * secondsPerBeat;
                             const preciseTime = time + noteTimeOffset;
@@ -451,11 +548,29 @@ export class AudioScheduler {
     /**
      * Trigger audio sample playback with proper routing and tracking
      * Fixes: #11 (GC pressure), #13 (mixer bypass), #18 (unstoppable samples)
+     * Enhanced: Queue playback if buffer not ready, never skip
      */
     private triggerAudio(url: string, time: number, volume: number, pan: number, semitones = 0, trackId = 0) {
         if (!this.audioBufferCache.has(url)) {
-            this.preloadAudioClip(url);
-            console.warn('Audio clip not buffered, skipping:', url);
+            // Buffer not ready - enqueue the playback request
+            if (!this.pendingPlaybackRequests.has(url)) {
+                this.pendingPlaybackRequests.set(url, []);
+            }
+            this.pendingPlaybackRequests.get(url)!.push({
+                time,
+                volume,
+                pan,
+                semitones,
+                trackId
+            });
+            
+            console.log(`Audio clip not buffered, queuing playback request: ${url} at time ${time}`);
+            
+            // Start loading the clip if not already loading
+            void this.preloadAudioClip(url).catch(err => {
+                console.error(`Failed to load audio clip for queued playback:`, url, err);
+            });
+            
             return;
         }
 
@@ -498,7 +613,7 @@ export class AudioScheduler {
 
 
     private triggerNote(track: Track, note: MidiNote, instrument: string | undefined, time: number, durationSec: number) {
-        console.log(`[AudioScheduler] Triggering Note: Track=${track.id} Pitch=${note.pitch} Time=${time} Duration=${durationSec}`);
+        // console.log(`[AudioScheduler] Triggering Note: Track=${track.id} Pitch=${note.pitch} Time=${time} Duration=${durationSec}`);
         try {
             if (track.type === 'drums') {
                 void this.engines?.toneDrumMachine.playNote(track.id, note.pitch, note.velocity, time);
@@ -619,6 +734,18 @@ export class AudioScheduler {
             unread: 0,
             avgLatencyMs: 0,
             samples: 0
+        };
+    }
+    
+    /**
+     * Get loading status for clips
+     */
+    public getLoadingStatus() {
+        return {
+            pendingLoads: this.pendingLoads.size,
+            cachedClips: this.audioBufferCache.size,
+            pendingPlaybacks: Array.from(this.pendingPlaybackRequests.values()).reduce((sum, arr) => sum + arr.length, 0),
+            isLoading: this.pendingLoads.size > 0
         };
     }
 }
