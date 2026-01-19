@@ -7,50 +7,53 @@
 .prOverlay {
     position: fixed;
     inset: 0;
-    background: rgba(0, 0, 0, 0.85);
-    backdrop-filter: blur(4px);
+    z-index: 1000;
     display: flex;
     align-items: center;
     justify-content: center;
-    z-index: 2000;
-    font-family: 'Inter', system-ui, sans-serif;
+    background: rgba(0, 0, 0, 0.85);
+    outline: none;
+    user-select: none;
+    -webkit-user-select: none;
+    backdrop-filter: blur(4px);
 }
 
 .prWindow {
-    background: #0b0b14;
-    border: 1px solid #2a2a3e;
     width: 95vw;
-    max-width: 1000px;
     height: 85vh;
-    border-radius: 16px;
+    background: #0c0c14;
+    border: 1px solid #1e1e2d;
+    border-radius: 12px;
     display: flex;
     flex-direction: column;
+    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.8);
     overflow: hidden;
-    box-shadow: 0 24px 48px rgba(0, 0, 0, 0.5);
+    transform: translateZ(0);
 }
 
 /* ============================================ */
 /* HEADER */
 /* ============================================ */
 .prHeader {
-    padding: 0.75rem 1.25rem;
-    background: rgba(20, 20, 32, 0.8);
-    border-bottom: 1px solid #1e1e2d;
+    height: 56px;
+    padding: 0 20px;
     display: flex;
     align-items: center;
     justify-content: space-between;
+    border-bottom: 1px solid #1e1e2d;
+    background: #10101a;
 }
 
 .trackInfo {
     display: flex;
     align-items: center;
-    gap: 0.75rem;
+    gap: 12px;
 }
 
 .trackColorPill {
-    width: 4px;
-    height: 24px;
-    border-radius: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
 }
 
 .trackText {
@@ -59,126 +62,121 @@
 }
 
 .trackName {
-    color: #fff;
-    font-weight: 600;
-    font-size: 0.95rem;
+    font-size: 14px;
+    font-weight: bold;
+    color: white;
 }
 
 .trackInst {
+    font-size: 11px;
     color: #7171a1;
-    font-size: 0.75rem;
 }
 
 .drumTag {
-    background: #5865f2;
-    color: #fff;
-    font-size: 0.65rem;
+    font-size: 9px;
     padding: 2px 6px;
+    background: #eb459e;
+    color: white;
     border-radius: 4px;
-    font-weight: 700;
-    margin-left: 8px;
+    font-weight: bold;
 }
 
 /* ============================================ */
 /* CONTROLS */
 /* ============================================ */
-.prControls {
+.controlsRight {
     display: flex;
     align-items: center;
-    gap: 1rem;
+    gap: 16px;
 }
 
 .toolGroup {
-    background: #161625;
-    border-radius: 8px;
-    padding: 2px;
     display: flex;
     align-items: center;
-    border: 1px solid #252538;
+    gap: 8px;
+    background: #1a1a24;
+    padding: 4px;
+    border-radius: 8px;
 }
 
 .toolBtn {
-    background: none;
-    border: none;
-    color: #a4a4d1;
-    padding: 6px 10px;
-    cursor: pointer;
+    height: 32px;
+    padding: 0 10px;
     display: flex;
     align-items: center;
     gap: 6px;
-    border-radius: 6px;
-    font-size: 0.75rem;
-    transition: 0.2s;
+    font-size: 12px;
+    color: #a4a4d1;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    border-radius: 4px;
 }
 
 .toolBtn:hover {
-    background: #23233a;
-    color: #fff;
-}
-
-.toolBtn:disabled {
-    opacity: 0.3;
-    cursor: not-allowed;
-}
-
-.toolBtnDanger:hover {
-    background: #f04747;
-    color: #fff;
+    background: #2a2a3e;
+    color: white;
 }
 
 .divider {
     width: 1px;
-    height: 20px;
+    height: 16px;
     background: #2a2a3e;
-    margin: 0 4px;
+}
+
+.deleteBtn {
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.deleteBtn:hover {
+    background: rgba(237, 66, 69, 0.1);
 }
 
 /* ============================================ */
 /* TRANSPORT */
 /* ============================================ */
-.transportCtrl {
-    margin: 0 8px;
-}
-
 .playBtn {
-    width: 42px;
-    height: 42px;
+    width: 40px;
+    height: 40px;
     border-radius: 50%;
-    background: #5865f2;
-    border: none;
-    cursor: pointer;
+    color: white;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 0 15px rgba(88, 101, 242, 0.4);
-    transition: 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(88, 101, 242, 0.4);
+    transition: transform 0.1s;
 }
 
-.playBtn:hover {
-    transform: scale(1.05);
-    background: #4752c4;
-}
-
-.playBtnPlaying {
-    background: #f04747;
-    box-shadow: 0 0 15px rgba(240, 71, 71, 0.4);
+.playBtn:active {
+    transform: scale(0.95);
 }
 
 .closeBtn {
-    background: none;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background: transparent;
     border: none;
     color: #58587a;
-    cursor: pointer;
-    padding: 4px;
-    transition: 0.2s;
     display: flex;
     align-items: center;
     justify-content: center;
+    cursor: pointer;
 }
 
 .closeBtn:hover {
-    color: #fff;
-    transform: rotate(90deg);
+    color: white;
+    background: #2a2a3e;
 }
 
 /* ============================================ */
@@ -188,80 +186,36 @@
     flex: 1;
     display: flex;
     overflow: hidden;
-    position: relative;
 }
 
 /* ============================================ */
 /* SIDEBAR (Piano Keys) */
 /* ============================================ */
 .prSidebar {
-    background: #1a1a24;
-    border-right: 2px solid #2a2a3e;
+    background: #10101a;
+    border-right: 1px solid #1e1e2d;
     position: relative;
-    overflow: hidden;
-    z-index: 10;
 }
 
 .sidebarScroll {
     position: absolute;
     top: 0;
     left: 0;
-    width: 100%;
-    transition: none;
+    right: 0;
 }
 
 .sidebarKey {
-    width: 100%;
     display: flex;
     align-items: center;
-    padding: 0 10px;
+    justify-content: flex-end;
+    padding-right: 8px;
+    font-size: 9px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.02);
     cursor: pointer;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
-    position: relative;
 }
 
-.whiteKey {
-    background: #e2e2e7;
-    color: #000;
-}
-
-.blackKey {
-    background: #1a1a1b;
-    color: #fff;
-}
-
-.isC {
-    background: #fff;
-    border-left: 4px solid #5865f2;
-}
-
-.whiteKey:hover {
-    background: #fff;
-}
-
-.blackKey:hover {
-    background: #2a2a2b;
-}
-
-.keyLabel {
-    font-size: 0.7rem;
-    font-weight: 700;
-    letter-spacing: -0.02em;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.whiteKey .keyLabel {
-    color: #000;
-}
-
-.blackKey .keyLabel {
-    color: #aaa;
-}
-
-.isC .keyLabel {
-    color: #000;
+.sidebarKey:hover {
+    background: rgba(255, 255, 255, 0.05) !important;
 }
 
 /* ============================================ */
@@ -271,118 +225,31 @@
     flex: 1;
     overflow: auto;
     background: #0c0c14;
-    scroll-behavior: auto;
-}
-
-.prGridCanvas {
     position: relative;
-    cursor: crosshair;
-}
-
-/* ============================================ */
-/* NOTES */
-/* ============================================ */
-.noteBlock {
-    position: absolute;
-    border-radius: 4px;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.1);
-    cursor: grab;
-    min-width: 4px;
-    transition: box-shadow 0.15s;
-}
-
-.noteBlock:active {
-    cursor: grabbing;
-}
-
-.noteBlockSelected {
-    border-color: #fff;
-    box-shadow: 0 0 10px rgba(255, 255, 255, 0.4);
-    z-index: 100;
-}
-
-/* Resize handles */
-.resizeHandleLeft,
-.resizeHandleRight {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 6px;
-    cursor: ew-resize;
-    z-index: 5;
-    opacity: 0;
-    transition: opacity 0.15s;
-}
-
-.resizeHandleLeft {
-    left: 0;
-    border-radius: 4px 0 0 4px;
-    background: linear-gradient(90deg, rgba(255, 255, 255, 0.4), transparent);
-}
-
-.resizeHandleRight {
-    right: 0;
-    border-radius: 0 4px 4px 0;
-    background: linear-gradient(-90deg, rgba(255, 255, 255, 0.4), transparent);
-}
-
-.noteBlock:hover .resizeHandleLeft,
-.noteBlock:hover .resizeHandleRight {
-    opacity: 1;
-}
-
-/* ============================================ */
-/* PLAYHEAD */
-/* ============================================ */
-.playhead {
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 2px;
-    background: #ff4d4d;
-    z-index: 150;
-    pointer-events: none;
-    box-shadow: 0 0 10px rgba(255, 77, 77, 0.4);
-}
-
-/* ============================================ */
-/* SELECTION MARQUEE */
-/* ============================================ */
-.marquee {
-    position: absolute;
-    background: rgba(88, 101, 242, 0.15);
-    border: 1px solid #5865f2;
-    pointer-events: none;
 }
 
 /* ============================================ */
 /* FOOTER */
 /* ============================================ */
 .prFooter {
-    padding: 0.5rem 1.25rem;
-    background: #141420;
-    border-top: 1px solid #1e1e2d;
+    height: 32px;
+    padding: 0 20px;
     display: flex;
-    justify-content: space-between;
     align-items: center;
+    justify-content: space-between;
+    background: #0c0c14;
+    border-top: 1px solid #1e1e2d;
+    font-size: 10px;
+    color: #58587a;
 }
 
 .shortcuts {
     display: flex;
-    gap: 1rem;
-    color: #58587a;
-    font-size: 0.65rem;
+    gap: 16px;
 }
 
 .shortcuts b {
     color: #8a8ab1;
-}
-
-.zoomInfo {
-    color: #58587a;
-    font-size: 0.65rem;
-    font-weight: 600;
 }
 
 /* ============================================ */
@@ -394,37 +261,35 @@
 
 .gridDropdown {
     position: absolute;
-    top: 100%;
-    left: 0;
-    background: #1e1e2d;
+    top: calc(100% + 8px);
+    right: 0;
+    background: #1a1a24;
     border: 1px solid #2a2a3e;
     border-radius: 8px;
     padding: 4px;
-    margin-top: 4px;
-    display: flex;
-    flex-direction: column;
-    z-index: 200;
+    z-index: 1100;
     min-width: 80px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.5);
 }
 
-.gridDropdown button {
-    background: none;
-    border: none;
-    color: #8a8ab1;
-    padding: 6px 12px;
-    font-size: 0.7rem;
+.gridOption {
+    width: 100%;
+    padding: 8px 12px;
     text-align: left;
+    font-size: 12px;
+    border: none;
     border-radius: 4px;
     cursor: pointer;
+    background: transparent;
+    color: #a4a4d1;
 }
 
-.gridDropdown button:hover {
+.gridOption:hover {
+    background: #2a2a3e;
+    color: white;
+}
+
+.gridOptionActive {
     background: #2a2a3e;
     color: #fff;
-}
-
-.gridDropdownActive {
-    background: #5865f2 !important;
-    color: #fff !important;
 }
