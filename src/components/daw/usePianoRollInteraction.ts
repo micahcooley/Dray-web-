@@ -53,6 +53,32 @@ export function usePianoRollInteraction({
         return null;
     }, [visiblePitches]);
 
+    // Hit-test helper
+    const findHitNote = useCallback((worldX: number, worldY: number, resizeMargin: number = 8): { note: MidiNote; mode: 'move' | 'resize-left' | 'resize-right' } | null => {
+        const pitch = getPitchFromY(worldY);
+        if (pitch === null) return null;
+
+        // Search for clicked note (reverse to hit top notes first)
+        for (let i = notes.length - 1; i >= 0; i--) {
+            const note = notes[i];
+            if (note.pitch === pitch) {
+                const startX = note.start * pixelsPerBeat;
+                const endX = (note.start + note.duration) * pixelsPerBeat;
+
+                // Check collision in world space
+                if (worldX >= startX && worldX <= endX) {
+                    let mode: 'move' | 'resize-left' | 'resize-right';
+                    // Check resize zones
+                    if (worldX <= startX + resizeMargin) mode = 'resize-left';
+                    else if (worldX >= endX - resizeMargin) mode = 'resize-right';
+                    else mode = 'move';
+                    return { note, mode };
+                }
+            }
+        }
+        return null;
+    }, [notes, pixelsPerBeat, getPitchFromY]);
+
     // Grid Snap Helper
     const snap = useCallback((val: number) => {
         return Math.round(val / gridSize) * gridSize;
@@ -71,32 +97,10 @@ export function usePianoRollInteraction({
         const worldY = y;
 
         // Hit Testing using World Coords
-        const pitch = getPitchFromY(worldY);
+        const hitResult = findHitNote(worldX, worldY);
 
-        const resizeMargin = 8; // pixels
-        let hitNote: MidiNote | undefined;
-        let mode: 'move' | 'resize-left' | 'resize-right' | null = null;
-
-        // Search for clicked note (reverse to hit top notes first)
-        for (let i = notes.length - 1; i >= 0; i--) {
-            const note = notes[i];
-            if (note.pitch === pitch) {
-                const startX = note.start * pixelsPerBeat;
-                const endX = (note.start + note.duration) * pixelsPerBeat;
-
-                // Check collision in world space
-                if (worldX >= startX && worldX <= endX) {
-                    hitNote = note;
-                    // Check resize zones
-                    if (worldX <= startX + resizeMargin) mode = 'resize-left';
-                    else if (worldX >= endX - resizeMargin) mode = 'resize-right';
-                    else mode = 'move';
-                    break;
-                }
-            }
-        }
-
-        if (hitNote) {
+        if (hitResult) {
+            const { note: hitNote, mode } = hitResult;
             setDragMode(mode);
 
             // Selection Logic
@@ -129,7 +133,7 @@ export function usePianoRollInteraction({
                 setSelectedNotes(new Set());
             }
         }
-    }, [notes, pixelsPerBeat, getPitchFromY, gridSize, selectedNotes, isPlaying, playNotePreview]);
+    }, [notes, selectedNotes, isPlaying, playNotePreview, findHitNote]);
 
     const handleGridMouseMove = useCallback((e: React.MouseEvent) => {
         const canvas = e.currentTarget;
@@ -153,24 +157,16 @@ export function usePianoRollInteraction({
             // Handle Hover Cursor Feedback
             const worldX = x; // Already relative
             const worldY = y;
-            const pitch = getPitchFromY(worldY);
 
+            const hitResult = findHitNote(worldX, worldY);
             let cursor = 'default';
-            const resizeMargin = 8;
-
-            for (let i = notes.length - 1; i >= 0; i--) {
-                const note = notes[i];
-                if (note.pitch === pitch) {
-                    const startX = note.start * pixelsPerBeat;
-                    const endX = (note.start + note.duration) * pixelsPerBeat;
-                    if (worldX >= startX && worldX <= endX) {
-                        if (worldX <= startX + resizeMargin) cursor = 'w-resize';
-                        else if (worldX >= endX - resizeMargin) cursor = 'e-resize';
-                        else cursor = 'move';
-                        break;
-                    }
-                }
+            
+            if (hitResult) {
+                if (hitResult.mode === 'resize-left') cursor = 'w-resize';
+                else if (hitResult.mode === 'resize-right') cursor = 'e-resize';
+                else cursor = 'move';
             }
+            
             (canvas as HTMLElement).style.cursor = cursor;
         }
 
@@ -233,7 +229,7 @@ export function usePianoRollInteraction({
             canvasRef.current.render(updatedNotes);
         }
 
-    }, [dragMode, dragStart, selectionBox, notes, pixelsPerBeat, gridSize, snap, getYFromPitch, selectedNotes, getPitchFromY, mouseDownStart, canvasRef]);
+    }, [dragMode, dragStart, selectionBox, notes, pixelsPerBeat, gridSize, snap, getYFromPitch, selectedNotes, mouseDownStart, canvasRef, findHitNote]);
 
     const handleGridMouseUp = useCallback((e: React.MouseEvent) => {
         // Commit logic for Drag
@@ -370,16 +366,13 @@ export function usePianoRollInteraction({
 
     return {
         selectedNotes,
-        setSelectedNotes,
         dragMode,
         dragStart,
         selectionBox,
-        mouseDownStart,
         handleCanvasMouseDown,
         handleGridMouseMove,
         handleGridMouseUp,
         handleKeyDown,
-        getYFromPitch,
-        getPitchFromY
+        getYFromPitch
     };
 }
