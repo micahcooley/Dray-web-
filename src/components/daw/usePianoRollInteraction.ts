@@ -133,7 +133,7 @@ export function usePianoRollInteraction({
                 setSelectedNotes(new Set());
             }
         }
-    }, [notes, selectedNotes, isPlaying, playNotePreview, getPitchFromY, pixelsPerBeat]);
+    }, [notes, selectedNotes, isPlaying, playNotePreview, findHitNote]);
 
     const handleGridMouseMove = useCallback((e: React.MouseEvent) => {
         const canvas = e.currentTarget;
@@ -229,7 +229,7 @@ export function usePianoRollInteraction({
             canvasRef.current.render(updatedNotes);
         }
 
-    }, [dragMode, dragStart, selectionBox, notes, pixelsPerBeat, gridSize, snap, getYFromPitch, selectedNotes, mouseDownStart, canvasRef, getPitchFromY]);
+    }, [dragMode, dragStart, selectionBox, notes, pixelsPerBeat, gridSize, snap, getYFromPitch, selectedNotes, mouseDownStart, canvasRef, findHitNote]);
 
     const handleGridMouseUp = useCallback((e: React.MouseEvent) => {
         // Commit logic for Drag
