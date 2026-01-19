@@ -12,9 +12,7 @@ import {
   toneVocalEngine
 } from '../../lib/toneEngine';
 import { useProjectStore } from '../../store/useProjectStore';
-import PianoGrid from './PianoGrid';
-import PianoRollPlayhead from './PianoRollPlayhead';
-import styles from './pianoroll.module.css';
+import PianoRollCanvas, { PianoRollCanvasHandle } from './PianoRollCanvas';
 import {
   NOTE_HEIGHT,
   BEATS_VISIBLE,
@@ -26,12 +24,21 @@ import {
   MAX_ZOOM,
   DRUM_MAP,
   NOTE_NAMES,
+  BLACK_KEY_INDICES,
   getEngineForInstrument
 } from '../../lib/constants';
 import type { MidiNote } from '../../lib/types';
-
-// Re-export Note type for backwards compatibility
 export type Note = MidiNote;
+
+const getNoteName = (pitch: number) => {
+  const note = NOTE_NAMES[pitch % 12];
+  const octave = Math.floor(pitch / 12) - 1;
+  return `${note}${octave}`;
+};
+
+const isBlackKey = (pitch: number) => {
+  return BLACK_KEY_INDICES.includes((pitch % 12) as any);
+};
 
 interface PianoRollProps {
   trackId: number;
@@ -39,12 +46,12 @@ interface PianoRollProps {
   trackColor: string;
   trackType?: 'audio' | 'midi' | 'drums';
   instrument?: string;
-  notes: Note[];
-  onNotesChange: (notes: Note[]) => void;
+  notes: MidiNote[];
+  onNotesChange: (notes: MidiNote[]) => void;
   onClose: () => void;
 }
 
-export default function PianoRoll({
+function PianoRollBase({
   trackId,
   trackName,
   trackColor,
@@ -61,14 +68,18 @@ export default function PianoRoll({
   const [zoom, setZoom] = useState(DEFAULT_ZOOM);
   const [showGridMenu, setShowGridMenu] = useState(false);
   const [dragMode, setDragMode] = useState<'move' | 'resize-left' | 'resize-right' | null>(null);
-  const [dragStart, setDragStart] = useState<{ x: number; y: number; notes: Note[] } | null>(null);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number; notes: MidiNote[] } | null>(null);
   const [selectionBox, setSelectionBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
   const [mouseDownStart, setMouseDownStart] = useState<{ x: number; y: number } | null>(null);
 
-  const gridRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const lastPreviewPitch = useRef<number | null>(null);
+
+  // High-Performance Drag State
+  const canvasRef = useRef<PianoRollCanvasHandle>(null);
+  // Stores the "temporary" notes during a drag operation to avoid React State thrashing
+  const interactionNotesRef = useRef<MidiNote[] | null>(null);
 
   const pixelsPerBeat = zoom;
 
@@ -95,13 +106,299 @@ export default function PianoRoll({
     return null;
   }, [visiblePitches]);
 
+  const handleTogglePlay = useCallback(async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    if (!isPlaying) {
+      await audioEngine.initialize();
+      await audioEngine.resume();
+    }
+    storeTogglePlay();
+  }, [isPlaying, storeTogglePlay]);
+
+  const handlePlayDoubleClick = useCallback(async (e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+
+    // Verify engine is ready
+    await audioEngine.initialize();
+    await audioEngine.resume();
+
+    // Always reset time to 0
+    setCurrentTime(0);
+
+    // If not playing (or if double click race condition toggled it off), force play
+    // We check the store state directly via hook dependency
+    if (!isPlaying) {
+      storeTogglePlay();
+    }
+  }, [setCurrentTime, isPlaying, storeTogglePlay]);
+
+  // Grid Snap Helper
+  const snap = useCallback((val: number) => {
+    return Math.round(val / gridSize) * gridSize;
+  }, [gridSize]);
+
+  const playNotePreview = useCallback((pitch: number) => {
+    if (lastPreviewPitch.current === pitch) return;
+    lastPreviewPitch.current = pitch;
+
+    // Fire and forget - don't await to avoid blocking UI
+    // Engine is already initialized by useEffect on mount
+    const preview = async () => {
+      // Ensure engine is ready (fast check)
+      if (!audioEngine.isReady()) await audioEngine.initialize();
+
+      if (trackType === 'drums') {
+        const sound = DRUM_MAP[pitch];
+        if (sound) await toneDrumMachine.playKick(-1, sound, 0.8);
+      } else {
+        const targetInstrument = instrument || 'Grand Piano';
+        const engineName = getEngineForInstrument(targetInstrument);
+        if (engineName === 'bass') {
+          toneBassEngine.playNote(-1, pitch, '8n', 0.8, targetInstrument); // Sync trigger
+        } else if (engineName === 'keys') {
+          toneKeysEngine.playChord(-1, targetInstrument, [pitch], '8n', 0.8); // Sync trigger
+        } else {
+          toneSynthEngine.previewNote(-1, targetInstrument, pitch, 0.8); // Optimized preview
+        }
+      }
+    };
+
+    preview().catch(console.error);
+    setTimeout(() => { lastPreviewPitch.current = null; }, 100);
+  }, [trackType, instrument]);
+
+  // Mouse Handlers
+  const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault(); // Prevent native drag/select
+    const canvas = e.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // VIRTUALIZATION FIX: Logic uses wrapper-relative coordinate 'x'/'y' which are already World Coordinates.
+    const worldX = x;
+    const worldY = y;
+
+    // Hit Testing using World Coords
+    const pitch = getPitchFromY(worldY);
+
+    const resizeMargin = 8; // pixels
+    let hitNote: MidiNote | undefined;
+    let mode: 'move' | 'resize-left' | 'resize-right' | null = null;
+
+    // Search for clicked note (reverse to hit top notes first)
+    for (let i = notes.length - 1; i >= 0; i--) {
+      const note = notes[i];
+      if (note.pitch === pitch) {
+        const startX = note.start * pixelsPerBeat;
+        const endX = (note.start + note.duration) * pixelsPerBeat;
+
+        // Check collision in world space
+        if (worldX >= startX && worldX <= endX) {
+          hitNote = note;
+          // Check resize zones
+          if (worldX <= startX + resizeMargin) mode = 'resize-left';
+          else if (worldX >= endX - resizeMargin) mode = 'resize-right';
+          else mode = 'move';
+          break;
+        }
+      }
+    }
+
+    if (hitNote) {
+      setDragMode(mode);
+
+      // Selection Logic
+      let newSelected = new Set(selectedNotes);
+      if (e.shiftKey) {
+        if (newSelected.has(hitNote.id)) newSelected.delete(hitNote.id);
+        else newSelected.add(hitNote.id);
+      } else {
+        if (!newSelected.has(hitNote.id)) {
+          newSelected = new Set([hitNote.id]);
+        }
+      }
+      setSelectedNotes(newSelected);
+
+      const draggedNotes = notes.filter(n => newSelected.has(n.id));
+      setDragStart({ x: e.clientX, y: e.clientY, notes: draggedNotes });
+      setMouseDownStart(null); // Clear pending empty click
+
+      if (!isPlaying) playNotePreview(hitNote.pitch);
+    } else {
+      // EMPTY CLICK -> Ambiguous (Create vs Select)
+      if (e.shiftKey) {
+        // Shift always starts selection immediately (classic behavior)
+        setSelectionBox({ x1: worldX, y1: worldY, x2: worldX, y2: worldY });
+        setMouseDownStart(null);
+      } else {
+        // Defer until move or up
+        setMouseDownStart({ x: e.clientX, y: e.clientY }); // Store screen coords for drag threshold
+        // Deselect on empty down
+        setSelectedNotes(new Set());
+      }
+    }
+  }, [notes, pixelsPerBeat, getPitchFromY, gridSize, selectedNotes, isPlaying, playNotePreview, onNotesChange]);
+
+  const handleGridMouseMove = useCallback((e: React.MouseEvent) => {
+    const canvas = e.currentTarget;
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Check for drag-select threshold from empty click
+    if (mouseDownStart && !selectionBox && !dragMode) {
+      const dist = Math.hypot(e.clientX - mouseDownStart.x, e.clientY - mouseDownStart.y);
+      if (dist > 5) {
+        const startWorldX = mouseDownStart.x - rect.left;
+        const startWorldY = mouseDownStart.y - rect.top;
+        setSelectionBox({ x1: startWorldX, y1: startWorldY, x2: x, y2: y });
+        setMouseDownStart(null); // Consumed
+        return;
+      }
+    }
+
+    if (!dragMode && !selectionBox && !mouseDownStart) {
+      // Handle Hover Cursor Feedback
+      const worldX = x; // Already relative
+      const worldY = y;
+      const pitch = getPitchFromY(worldY);
+
+      let cursor = 'default';
+      const resizeMargin = 8;
+
+      for (let i = notes.length - 1; i >= 0; i--) {
+        const note = notes[i];
+        if (note.pitch === pitch) {
+          const startX = note.start * pixelsPerBeat;
+          const endX = (note.start + note.duration) * pixelsPerBeat;
+          if (worldX >= startX && worldX <= endX) {
+            if (worldX <= startX + resizeMargin) cursor = 'w-resize';
+            else if (worldX >= endX - resizeMargin) cursor = 'e-resize';
+            else cursor = 'move';
+            break;
+          }
+        }
+      }
+      (canvas as HTMLElement).style.cursor = cursor;
+    }
+
+    if (selectionBox) { // Selection Box Logic
+      setSelectionBox(prev => prev ? ({ ...prev, x2: x, y2: y }) : null);
+
+      // Collision Detection (O(N) but just math)
+      const boxX = Math.min(selectionBox.x1, x);
+      const boxY = Math.min(selectionBox.y1, y);
+      const boxW = Math.abs(x - selectionBox.x1);
+      const boxH = Math.abs(y - selectionBox.y1);
+
+      const newSelected = new Set<string>();
+      if (e.shiftKey) selectedNotes.forEach(id => newSelected.add(id));
+
+      notes.forEach(note => {
+        const noteX = note.start * pixelsPerBeat;
+        const noteY = getYFromPitch(note.pitch);
+        const noteW = note.duration * pixelsPerBeat;
+        const noteH = NOTE_HEIGHT;
+
+        if (noteX < boxX + boxW && noteX + noteW > boxX && noteY < boxY + boxH && noteH + noteY > boxY) {
+          newSelected.add(note.id);
+        }
+      });
+      setSelectedNotes(newSelected);
+      return;
+    }
+
+    if (!dragMode || !dragStart) return;
+
+    // Calculate Deltas for Drag
+    const deltaX = (e.clientX - dragStart.x) / pixelsPerBeat;
+    const pixelDeltaY = e.clientY - dragStart.y;
+    const pitchDelta = -Math.round(pixelDeltaY / NOTE_HEIGHT);
+
+    // Calculate new state but DO NOT COMMIT to store yet
+    const updatedNotes = notes.map(note => {
+      const original = dragStart.notes.find(n => n.id === note.id);
+      if (!original) return note;
+
+      if (dragMode === 'move') {
+        const newStart = Math.max(0, snap(original.start + deltaX));
+        const newPitch = Math.min(108, Math.max(21, original.pitch + pitchDelta));
+        return { ...note, start: newStart, pitch: newPitch };
+      } else if (dragMode === 'resize-right') {
+        const newDuration = Math.max(gridSize, snap(original.duration + deltaX));
+        return { ...note, duration: newDuration };
+      } else if (dragMode === 'resize-left') {
+        const newStart = Math.max(0, snap(original.start + deltaX));
+        const newDuration = Math.max(gridSize, original.duration + (original.start - newStart));
+        return { ...note, start: newStart, duration: newDuration };
+      }
+      return note;
+    });
+
+    // OPTIMIZATION: Update ref and force draw. NO STATE UPDATE.
+    interactionNotesRef.current = updatedNotes;
+    if (canvasRef.current) {
+      canvasRef.current.render(updatedNotes);
+    }
+
+  }, [dragMode, dragStart, selectionBox, notes, pixelsPerBeat, gridSize, snap, getYFromPitch, selectedNotes]);
+
+  const handleGridMouseUp = useCallback((e: React.MouseEvent) => {
+    // Commit logic for Drag
+    if (interactionNotesRef.current && dragMode) {
+      onNotesChange(interactionNotesRef.current);
+    }
+
+    // Deferred Creation Logic (Single Click handling)
+    if (mouseDownStart) {
+      // We released without dragging far enough -> Treat as Click
+      const canvas = e.currentTarget;
+      const rect = canvas.getBoundingClientRect();
+
+      // Use original down coordinates for accuracy
+      const worldX = mouseDownStart.x - rect.left;
+      const worldY = mouseDownStart.y - rect.top;
+
+      const pitch = getPitchFromY(worldY);
+      const start = Math.floor(worldX / pixelsPerBeat / gridSize) * gridSize;
+
+      if (pitch !== null && pitch >= 0 && pitch < 128) {
+        const newNote: Note = {
+          id: Math.random().toString(36).substr(2, 9),
+          pitch,
+          start,
+          duration: gridSize,
+          velocity: 0.8
+        };
+
+        playNotePreview(pitch);
+        onNotesChange([...notes, newNote]);
+        setSelectedNotes(new Set([newNote.id]));
+      }
+      setMouseDownStart(null);
+    }
+
+    interactionNotesRef.current = null;
+    // Force one last render to clear any drag artifacts if we missed an update, 
+    // although onNotesChange trigger will likely cause a prop update soon.
+    if (canvasRef.current) {
+      canvasRef.current.render(undefined); // Reset to props.notes (which will be old notes until parent updates)
+    }
+
+    setDragMode(null);
+    setDragStart(null);
+    setSelectionBox(null);
+  }, [dragMode, onNotesChange, mouseDownStart, pixelsPerBeat, gridSize, getPitchFromY, notes, playNotePreview]);
+
+
   // Sync sidebar scroll with grid scroll
   useEffect(() => {
     const scrollContainer = scrollContainerRef.current;
     if (!scrollContainer) return;
 
     const handleScroll = () => {
-      const sidebarScroll = document.querySelector(`.${styles.sidebarScroll}`) as HTMLElement;
+      const sidebarScroll = document.querySelector(`.sidebarScroll`) as HTMLElement;
       if (sidebarScroll) {
         sidebarScroll.style.transform = `translateY(${-scrollContainer.scrollTop}px)`;
       }
@@ -111,562 +408,253 @@ export default function PianoRoll({
     return () => scrollContainer.removeEventListener('scroll', handleScroll);
   }, []);
 
-  // Initialize audio engine ONLY ON MOUNT
+  // Initialize audio engine - DEFERRED to unblock main thread on mount
   useEffect(() => {
-    // Auto-scroll to notes only on initial mount
-    if (scrollContainerRef.current) {
-      const containerHeight = scrollContainerRef.current.clientHeight;
-      let targetY = 0;
+    const timer = setTimeout(() => {
+      // Audio Scope
+      const { audioScheduler } = require('../../lib/scheduler');
+      if (isPlaying && audioScheduler.scopedTrackId === trackId) {
+        audioScheduler.setScopedMode(notes, trackId, instrument || '', trackType);
+      }
 
-      if (notes && notes.length > 0) {
-        let sumY = 0;
-        let count = 0;
-        notes.forEach(n => {
-          const y = getYFromPitch(n.pitch);
-          if (y !== -1) {
-            sumY += y;
-            count++;
-          }
-        });
-        if (count > 0) targetY = sumY / count;
+      // Synth Initialization
+      const targetInstrument = instrument || 'Grand Piano';
+      if (trackType !== 'drums') {
+        const engineName = getEngineForInstrument(targetInstrument);
+        let engine: any;
+        switch (engineName) {
+          case 'bass': engine = toneBassEngine; break;
+          case 'keys': engine = toneKeysEngine; break;
+          case 'fx': engine = toneFXEngine; break;
+          case 'vocal': engine = toneVocalEngine; break;
+          default: engine = toneSynthEngine;
+        }
+        // Initialize async but don't await blocking the effect
+        if (engine && engine.getSynth) {
+          engine.getSynth(trackId, targetInstrument).catch(() => { });
+        } else if (engine && engine.initialize) {
+          engine.initialize().catch(() => { });
+        }
       } else {
-        targetY = (visiblePitches.length * NOTE_HEIGHT) / 2;
+        toneDrumMachine.initialize?.().catch(() => { });
       }
 
-      scrollContainerRef.current.scrollTop = Math.max(0, targetY - containerHeight / 2);
-    }
-
-    // PRECACHE: Warm up the synth for this track so the first note plays instantly
-    const targetInstrument = instrument || 'Grand Piano';
-    if (trackType !== 'drums') {
-      const engineName = getEngineForInstrument(targetInstrument);
-      let engine: any;
-      switch (engineName) {
-        case 'bass': engine = toneBassEngine; break;
-        case 'keys': engine = toneKeysEngine; break;
-        case 'fx': engine = toneFXEngine; break;
-        case 'vocal': engine = toneVocalEngine; break;
-        default: engine = toneSynthEngine;
+      // Scroll Position (Moved here to happen after paint)
+      if (scrollContainerRef.current) {
+        const containerHeight = scrollContainerRef.current.clientHeight;
+        let targetY = 0;
+        if (notes && notes.length > 0) {
+          let sumY = 0;
+          let count = 0;
+          // Sample first 20 notes only for speed
+          const sample = notes.slice(0, 20);
+          sample.forEach(n => {
+            const y = getYFromPitch(n.pitch);
+            if (y !== -1) {
+              sumY += y;
+              count++;
+            }
+          });
+          if (count > 0) targetY = sumY / count;
+        } else {
+          targetY = (visiblePitches.length * NOTE_HEIGHT) / 2;
+        }
+        scrollContainerRef.current.scrollTop = Math.max(0, targetY - containerHeight / 2);
       }
-      // Fire-and-forget precache: getSynth internally caches the synth
-      if (engine && engine.getSynth) {
-        engine.getSynth(trackId, targetInstrument).catch(() => { });
-      } else if (engine && engine.initialize) {
-        engine.initialize().catch(() => { });
-      }
-    } else {
-      // For drums, just ensure drum machine is initialized
-      toneDrumMachine.initialize?.().catch(() => { });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [instrument, trackType]); // Removed notes and other deps - only scroll on mount
 
-  const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (e.repeat) return;
+    }, 10); // Short delay to allow paint
 
-    // IMPORTANT: Ignore keyboard shortcuts when user is typing in an input
-    const activeElement = document.activeElement;
-    if (activeElement && (
-      activeElement.tagName === 'INPUT' ||
-      activeElement.tagName === 'TEXTAREA' ||
-      (activeElement as HTMLElement).isContentEditable
-    )) {
-      return;
-    }
+    return () => clearTimeout(timer);
+  }, [instrument, trackType, trackId, visiblePitches, getYFromPitch, notes, isPlaying]);
 
+  // Keyboard Shortcuts
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    // Zoom
     if (e.ctrlKey || e.metaKey) {
+      if (e.key === 'a' || e.key === 'A') {
+        e.preventDefault();
+        setSelectedNotes(new Set(notes.map(n => n.id)));
+        return;
+      }
       if (e.key === '=' || e.key === '+') {
         e.preventDefault();
-        setZoom(prev => Math.min(MAX_ZOOM, prev + 20));
-      } else if (e.key === '-') {
+        setZoom(z => Math.min(MAX_ZOOM, z + 10));
+        return;
+      }
+      if (e.key === '-') {
         e.preventDefault();
-        setZoom(prev => Math.max(MIN_ZOOM, prev - 20));
+        setZoom(z => Math.max(MIN_ZOOM, z - 10));
+        return;
       }
     }
 
-    // Handle Delete
+    // Delete
     if (e.key === 'Delete' || e.key === 'Backspace') {
       if (selectedNotes.size > 0) {
-        e.preventDefault();
         onNotesChange(notes.filter(n => !selectedNotes.has(n.id)));
         setSelectedNotes(new Set());
       }
-    }
-
-    // Handle Note Movement with Arrows
-    if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key) && selectedNotes.size > 0) {
-      e.preventDefault();
-
-      const movePitch = (currentPitch: number, direction: 'up' | 'down', amount: number = 1) => {
-        const currentIndex = visiblePitches.indexOf(currentPitch);
-        if (currentIndex === -1) return currentPitch;
-        let newIndex = direction === 'up' ? currentIndex - amount : currentIndex + amount;
-        newIndex = Math.max(0, Math.min(visiblePitches.length - 1, newIndex));
-        return visiblePitches[newIndex];
-      };
-
-      const moveAmount = e.shiftKey ? 12 : 1;
-      const timeAmount = gridSize;
-
-      switch (e.key) {
-        case 'ArrowUp':
-          e.preventDefault();
-          onNotesChange(notes.map(n => {
-            if (!selectedNotes.has(n.id)) return n;
-            return { ...n, pitch: trackType === 'drums' ? movePitch(n.pitch, 'up', 1) : Math.min(127, n.pitch + moveAmount) };
-          }));
-          break;
-        case 'ArrowDown':
-          e.preventDefault();
-          onNotesChange(notes.map(n => {
-            if (!selectedNotes.has(n.id)) return n;
-            return { ...n, pitch: trackType === 'drums' ? movePitch(n.pitch, 'down', 1) : Math.max(0, n.pitch - moveAmount) };
-          }));
-          break;
-        case 'ArrowLeft':
-          e.preventDefault();
-          if (e.shiftKey) {
-            onNotesChange(notes.map(n => selectedNotes.has(n.id) ? { ...n, duration: Math.max(gridSize, n.duration - gridSize) } : n));
-          } else {
-            onNotesChange(notes.map(n => selectedNotes.has(n.id) ? { ...n, start: Math.max(0, n.start - timeAmount) } : n));
-          }
-          break;
-        case 'ArrowRight':
-          e.preventDefault();
-          if (e.shiftKey) {
-            onNotesChange(notes.map(n => selectedNotes.has(n.id) ? { ...n, duration: n.duration + gridSize } : n));
-          } else {
-            onNotesChange(notes.map(n => selectedNotes.has(n.id) ? { ...n, start: n.start + timeAmount } : n));
-          }
-          break;
-        case 'Delete':
-        case 'Backspace':
-          e.preventDefault();
-          onNotesChange(notes.filter(n => !selectedNotes.has(n.id)));
-          setSelectedNotes(new Set());
-          break;
-        case 'Escape':
-          setSelectedNotes(new Set());
-          setShowGridMenu(false);
-          break;
-      }
-    };
-
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [selectedNotes, notes, gridSize, trackType, visiblePitches, onNotesChange]);
-
-  const getNoteName = (midiNote: number) => {
-    if (trackType === 'drums') return DRUM_MAP[midiNote] || `Pitch ${midiNote}`;
-    const octave = Math.floor(midiNote / 12) - 1;
-    const noteIndex = midiNote % 12;
-    return `${NOTE_NAMES[noteIndex]}${octave}`;
-  };
-
-  const isBlackKey = (midiNote: number) => {
-    if (trackType === 'drums') return false;
-    return [1, 3, 6, 8, 10].includes(midiNote % 12);
-  };
-
-  const playNotePreview = (pitch: number) => {
-    const targetInstrument = instrument || 'Grand Piano';
-
-    if (trackType === 'drums') {
-      // Drums: (trackId, pitch, velocity)
-      (toneDrumMachine as any).previewNote(trackId, pitch, 0.7);
-    } else {
-      const engineName = getEngineForInstrument(targetInstrument);
-      let engine: any;
-
-      switch (engineName) {
-        case 'bass': engine = toneBassEngine; break;
-        case 'keys': engine = toneKeysEngine; break;
-        case 'fx': engine = toneFXEngine; break;
-        case 'vocal': engine = toneVocalEngine; break;
-        default: engine = toneSynthEngine;
-      }
-
-      if (engine && engine.previewNote) {
-        // Standardized: (trackId, preset, note, velocity)
-        engine.previewNote(trackId, targetInstrument, pitch, 0.7);
-      } else if (engine && engine.playNote) {
-        // Fallback if previewNote missing
-        engine.playNote(trackId, targetInstrument, pitch, '8n', 0.7);
-      }
-    }
-  };
-
-  const snapToGrid = (value: number) => Math.round(value / gridSize) * gridSize;
-
-  const handleGridMouseDown = (e: React.MouseEvent) => {
-    e.preventDefault();
-    const rect = gridRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-    setMouseDownStart({ x, y });
-    setSelectionBox({ x1: x, y1: y, x2: x, y2: y });
-    if (!e.shiftKey) setSelectedNotes(new Set());
-  };
-
-  const handleGridMouseMove = (e: React.MouseEvent) => {
-    if (selectionBox && mouseDownStart) {
-      const rect = gridRef.current?.getBoundingClientRect();
-      if (!rect) return;
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      setSelectionBox({ ...selectionBox, x2: x, y2: y });
       return;
     }
 
-    if (!dragStart || !dragMode) return;
+    // Arrows (Move/Transpose)
+    if (selectedNotes.size > 0 && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+      e.preventDefault();
 
-    const rect = gridRef.current?.getBoundingClientRect();
-    if (!rect) return;
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
+      const isShift = e.shiftKey;
+      const isVertical = e.key === 'ArrowUp' || e.key === 'ArrowDown';
 
-    const dx = x - dragStart.x;
-    const beatDelta = snapToGrid(dx / pixelsPerBeat);
-
-    const startPitch = getPitchFromY(dragStart.y);
-    const currentPitch = getPitchFromY(y);
-
-    onNotesChange(notes.map(n => {
-      if (!selectedNotes.has(n.id)) return n;
-      const original = dragStart.notes.find(on => on.id === n.id);
-      if (!original) return n;
-
-      if (dragMode === 'move') {
-        let newPitch = original.pitch;
-        if (startPitch !== null && currentPitch !== null) {
-          const startIndex = visiblePitches.indexOf(startPitch);
-          const currentIndex = visiblePitches.indexOf(currentPitch);
-          const indexDelta = currentIndex - startIndex;
-          const originalIndex = visiblePitches.indexOf(original.pitch);
-          if (originalIndex !== -1) {
-            const targetIndex = Math.max(0, Math.min(visiblePitches.length - 1, originalIndex + indexDelta));
-            newPitch = visiblePitches[targetIndex];
-          }
-        }
-        if (newPitch !== original.pitch && newPitch !== lastPreviewPitch.current) {
-          playNotePreview(newPitch);
-          lastPreviewPitch.current = newPitch;
-        }
-        return { ...n, start: Math.max(0, original.start + beatDelta), pitch: newPitch };
-      } else if (dragMode === 'resize-right') {
-        // Extend/shrink from right edge
-        return { ...n, duration: Math.max(gridSize, original.duration + beatDelta) };
-      } else if (dragMode === 'resize-left') {
-        // Resize from left: move start and adjust duration inversely
-        const newStart = Math.max(0, original.start + beatDelta);
-        const startDiff = newStart - original.start;
-        const newDuration = Math.max(gridSize, original.duration - startDiff);
-        // Don't let start go past original end
-        if (newStart >= original.start + original.duration - gridSize) {
-          return n;
-        }
-        return { ...n, start: newStart, duration: newDuration };
+      // Pitch Logic (Vertical)
+      let pitchChange = 0;
+      if (isVertical) {
+        const base = e.key === 'ArrowUp' ? 1 : -1;
+        pitchChange = base * (isShift ? 12 : 1);
       }
-      return n;
-    }));
-  };
 
-  const handleGridMouseUp = (e: React.MouseEvent) => {
-    if (selectionBox) {
-      const x1 = Math.min(selectionBox.x1, selectionBox.x2);
-      const x2 = Math.max(selectionBox.x1, selectionBox.x2);
-      const y1 = Math.min(selectionBox.y1, selectionBox.y2);
-      const y2 = Math.max(selectionBox.y1, selectionBox.y2);
+      // Time Logic (Horizontal)
+      let startChange = 0;
+      let durationChange = 0;
 
-      const newlySelected = notes.filter(n => {
-        const noteY = getYFromPitch(n.pitch);
-        if (noteY === -1) return false;
-        const noteX = n.start * pixelsPerBeat;
-        const noteRight = noteX + n.duration * pixelsPerBeat;
-        return noteX < x2 && noteRight > x1 && noteY < y2 && noteY + NOTE_HEIGHT > y1;
+      if (!isVertical) {
+        const delta = e.key === 'ArrowRight' ? gridSize : -gridSize;
+        if (isShift) {
+          // Shift + Horizontal = Resize Duration
+          durationChange = delta;
+        } else {
+          // Plain Horizontal = Move
+          startChange = delta;
+        }
+      }
+
+      const newNotes = notes.map(n => {
+        if (!selectedNotes.has(n.id)) return n;
+
+        let newPitch = n.pitch + pitchChange;
+        let newStart = n.start + startChange;
+        let newDuration = n.duration + durationChange;
+
+        // Clamp
+        newPitch = Math.max(0, Math.min(108, newPitch)); // Cap at C8 (108) to prevent aliasing
+        newStart = Math.max(0, newStart);
+        newDuration = Math.max(gridSize, newDuration);
+
+        return { ...n, pitch: newPitch, start: newStart, duration: newDuration };
       });
 
-      if (e.shiftKey) {
-        setSelectedNotes(prev => new Set([...prev, ...newlySelected.map(n => n.id)]));
-      } else if (newlySelected.length > 0 || Math.abs(selectionBox.x2 - selectionBox.x1) > 5) {
-        setSelectedNotes(new Set(newlySelected.map(n => n.id)));
-      } else if (mouseDownStart && !dragStart) {
-        // Single click to add note
-        const beat = snapToGrid(mouseDownStart.x / pixelsPerBeat);
-        const pitch = getPitchFromY(mouseDownStart.y);
-        if (pitch !== null) {
-          const newNote: Note = { id: `n-${Date.now()}`, pitch, start: beat, duration: gridSize, velocity: 0.8 };
-          onNotesChange([...notes, newNote]);
-          setSelectedNotes(new Set([newNote.id]));
-          playNotePreview(pitch);
-        }
-      }
-      setSelectionBox(null);
-    }
-    setDragMode(null);
-    setDragStart(null);
-    setMouseDownStart(null);
-    lastPreviewPitch.current = null;
-  };
+      onNotesChange(newNotes);
 
-  // Cleanup scoped mode on unmount
+      // Play preview of first selected note if transposing
+      // Play preview if transposing
+      if (pitchChange !== 0 && !isPlaying && selectedNotes.size === 1) {
+        const firstId = Array.from(selectedNotes)[0];
+        const note = newNotes.find(n => n.id === firstId);
+        if (note) playNotePreview(note.pitch);
+      }
+    }
+  }, [selectedNotes, notes, gridSize, onNotesChange, isPlaying, playNotePreview]);
+
+  // Autofocus component for keyboard shortcuts
   useEffect(() => {
-    return () => {
-      // If we are closing, ensure we clear the scoped mode
-      const { audioScheduler } = require('../../lib/scheduler'); // Lazy import to avoid cycle if any
-      audioScheduler.clearScopedMode();
-    };
+    containerRef.current?.focus();
   }, []);
 
-  // Sync notes to scheduler if playing in scoped mode
-  useEffect(() => {
-    const { audioScheduler } = require('../../lib/scheduler');
-    if (isPlaying && audioScheduler.scopedTrackId === trackId) {
-      audioScheduler.setScopedMode(notes, trackId, instrument || '', trackType);
-    }
-  }, [notes, isPlaying, trackId, instrument, trackType]);
-
-  // Calculate loop length as nearest whole bar count
-  const getLoopLengthBars = useCallback(() => {
-    if (notes.length === 0) return 4; // Default 4 bars
-    const maxEnd = Math.max(...notes.map(n => n.start + n.duration));
-    const bars = maxEnd / 4; // 4 beats per bar
-    // Round to nearest power of 2 or multiple of 4 (1, 2, 4, 8, 16, etc.)
-    if (bars <= 1) return 1;
-    if (bars <= 2) return 2;
-    if (bars <= 4) return 4;
-    if (bars <= 8) return 8;
-    return Math.ceil(bars / 4) * 4; // Round up to next 4
-  }, [notes]);
-
-  const handleTogglePlay = async () => {
-    const { audioScheduler } = require('../../lib/scheduler');
-
-    if (!isPlaying) {
-      await audioEngine.initialize();
-      await audioEngine.resume();
-
-      // Calculate loop bounds based on notes content
-      const loopBars = getLoopLengthBars();
-      const loopBeats = loopBars * 4;
-
-      // ENTER SCOPED MODE with loop bounds
-      audioScheduler.setScopedMode(notes, trackId, instrument || '', trackType, 0, loopBeats);
-    } else {
-      // EXIT SCOPED MODE
-      audioScheduler.clearScopedMode();
-    }
-    storeTogglePlay();
-  };
-
-  // Double-click: restart from beginning
-  const handlePlayDoubleClick = async () => {
-    const { audioScheduler } = require('../../lib/scheduler');
-
-    // Reset playhead to beginning
-    setCurrentTime(0);
-
-    if (!isPlaying) {
-      await audioEngine.initialize();
-      await audioEngine.resume();
-      const loopBars = getLoopLengthBars();
-      audioScheduler.setScopedMode(notes, trackId, instrument || '', trackType, 0, loopBars * 4);
-      storeTogglePlay();
-    }
-  };
-
   return (
-    <div className={styles.prOverlay} ref={containerRef} tabIndex={0}>
-      <div className={styles.prWindow}>
-        {/* Header */}
-        <div className={styles.prHeader}>
-          <div className={styles.trackInfo}>
-            <div className={styles.trackColorPill} style={{ backgroundColor: trackColor }}></div>
-            <div className={styles.trackText}>
-              <span className={styles.trackName}>{trackName}</span>
-              <span className={styles.trackInst}>{instrument || 'Midi Instrument'}</span>
+    <div className="prOverlay" ref={containerRef} tabIndex={0} onKeyDown={handleKeyDown} onMouseDown={() => containerRef.current?.focus()} style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.85)', outline: 'none', userSelect: 'none', WebkitUserSelect: 'none' }}>
+      <div className="prWindow" style={{ width: '95vw', height: '85vh', background: '#0c0c14', border: '1px solid #1e1e2d', borderRadius: '12px', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 48px rgba(0,0,0,0.8)', overflow: 'hidden', transform: 'translateZ(0)' }}>
+        <div className="prHeader" style={{ height: '56px', padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid #1e1e2d', background: '#10101a' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <div style={{ width: '12px', height: '12px', borderRadius: '50%', backgroundColor: trackColor }}></div>
+            <div>
+              <div style={{ fontSize: '14px', fontWeight: 'bold', color: 'white' }}>{trackName}</div>
+              <div style={{ fontSize: '11px', color: '#7171a1' }}>{instrument || 'Midi Instrument'}</div>
             </div>
-            {trackType === 'drums' && <div className={styles.drumTag}>DRUM VIEW</div>}
+            {trackType === 'drums' && <div style={{ fontSize: '9px', padding: '2px 6px', background: '#eb459e', color: 'white', borderRadius: '4px', fontWeight: 'bold' }}>DRUM VIEW</div>}
           </div>
 
-          <div className={styles.prControls}>
-            <div className={styles.toolGroup}>
-              <div className={styles.gridSelectorWrap}>
-                <button className={styles.toolBtn} onClick={() => setShowGridMenu(!showGridMenu)}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', background: '#1a1a24', padding: '4px', borderRadius: '8px' }}>
+              <div style={{ position: 'relative' }}>
+                <button style={{ height: '32px', padding: '0 10px', display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', color: '#a4a4d1', background: 'transparent', border: 'none', cursor: 'pointer' }} onClick={() => setShowGridMenu(!showGridMenu)}>
                   <Grid3X3 size={14} />
                   <span>{GRID_OPTIONS.find(g => g.value === gridSize)?.label}</span>
                 </button>
                 {showGridMenu && (
-                  <div className={styles.gridDropdown}>
+                  <div style={{ position: 'absolute', top: 'calc(100% + 8px)', right: 0, background: '#1a1a24', border: '1px solid #2a2a3e', borderRadius: '8px', padding: '4px', zIndex: 1100, minWidth: '80px', boxShadow: '0 8px 16px rgba(0,0,0,0.5)' }}>
                     {GRID_OPTIONS.map(opt => (
-                      <button
-                        key={opt.label}
-                        className={gridSize === opt.value ? styles.gridDropdownActive : ''}
-                        onClick={() => { setGridSize(opt.value); setShowGridMenu(false); }}
-                      >
+                      <button key={opt.label} style={{ width: '100%', padding: '8px 12px', textAlign: 'left', fontSize: '12px', color: gridSize === opt.value ? '#fff' : '#a4a4d1', background: gridSize === opt.value ? '#2a2a3e' : 'transparent', border: 'none', borderRadius: '4px', cursor: 'pointer' }} onClick={() => { setGridSize(opt.value); setShowGridMenu(false); }}>
                         {opt.label}
                       </button>
                     ))}
                   </div>
                 )}
               </div>
-              <div className={styles.divider}></div>
-              <button
-                className={`${styles.toolBtn} ${styles.toolBtnDanger}`}
-                onClick={() => onNotesChange(notes.filter(n => !selectedNotes.has(n.id)))}
-                disabled={selectedNotes.size === 0}
-              >
+              <div style={{ width: '1px', height: '16px', background: '#2a2a3e' }}></div>
+              <button style={{ width: '32px', height: '32px', display: 'flex', alignItems: 'center', justifyContent: 'center', color: selectedNotes.size === 0 ? '#58587a' : '#ed4245', background: 'transparent', border: 'none', cursor: selectedNotes.size === 0 ? 'default' : 'pointer' }} onClick={() => onNotesChange(notes.filter(n => !selectedNotes.has(n.id)))} disabled={selectedNotes.size === 0}>
                 <Trash2 size={14} />
               </button>
             </div>
 
-            <div className={styles.transportCtrl}>
-              <button
-                className={`${styles.playBtn} ${isPlaying ? styles.playBtnPlaying : ''}`}
-                onClick={handleTogglePlay}
-                onDoubleClick={handlePlayDoubleClick}
-                title="Click to play/stop, Double-click to restart"
-              >
-                {isPlaying ? <Square size={16} fill="white" /> : <Play size={16} fill="white" />}
-              </button>
-            </div>
+            <button style={{ width: '40px', height: '40px', borderRadius: '50%', background: isPlaying ? '#ed4245' : '#5865f2', color: 'white', display: 'flex', alignItems: 'center', justifyContent: 'center', border: 'none', cursor: 'pointer', boxShadow: '0 4px 12px rgba(88, 101, 242, 0.4)' }} onClick={handleTogglePlay} onDoubleClick={handlePlayDoubleClick}>
+              {isPlaying ? <Square size={16} fill="white" /> : <Play size={16} fill="white" />}
+            </button>
 
-            <button className={styles.closeBtn} onClick={onClose}><X size={20} /></button>
+            <button style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'transparent', border: 'none', color: '#58587a', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer' }} onClick={onClose}><X size={20} /></button>
           </div>
         </div>
 
-        <div className={styles.prMain}>
-          {/* Key Sidebar */}
-          <div className={styles.prSidebar} style={{ width: SIDEBAR_WIDTH }}>
-            <div className={styles.sidebarScroll}>
+        <div style={{ flex: 1, display: 'flex', overflow: 'hidden' }}>
+          {/* Key Sidebar - Keeping sidebar as DOM for simple styling of labels */}
+          <div style={{ width: SIDEBAR_WIDTH, background: '#10101a', borderRight: '1px solid #1e1e2d', position: 'relative' }}>
+            <div className="sidebarScroll" style={{ position: 'absolute', top: 0, left: 0, right: 0 }}>
               {visiblePitches.map((pitch) => {
                 const name = getNoteName(pitch);
-                const black = isBlackKey(pitch);
                 const isC = name.startsWith('C') && !name.includes('#');
-
                 return (
-                  <div
-                    key={pitch}
-                    className={`${styles.sidebarKey} ${black ? styles.blackKey : styles.whiteKey} ${isC ? styles.isC : ''}`}
-                    style={{ height: NOTE_HEIGHT }}
-                    onMouseDown={() => playNotePreview(pitch)}
-                  >
-                    <span className={styles.keyLabel}>{name}</span>
+                  <div key={pitch} style={{ height: NOTE_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', paddingRight: '8px', fontSize: '9px', fontWeight: isC ? 'bold' : 'normal', color: isC ? '#fff' : '#58587a', background: isBlackKey(pitch) ? '#0a0a0e' : 'transparent', borderBottom: '1px solid rgba(255,255,255,0.02)', cursor: 'pointer' }} onMouseDown={() => playNotePreview(pitch)}>
+                    {name}
                   </div>
                 );
               })}
             </div>
           </div>
 
-          <div className={styles.prViewport} ref={scrollContainerRef}>
-            <div
-              className={styles.prGridCanvas}
-              ref={gridRef}
-              onMouseDown={handleGridMouseDown}
+          <div ref={scrollContainerRef} style={{ flex: 1, overflow: 'auto', background: '#0c0c14', position: 'relative' }} onScroll={(e) => {
+            const sidebarScroll = document.querySelector('.sidebarScroll') as HTMLElement;
+            if (sidebarScroll) sidebarScroll.style.transform = `translateY(${-e.currentTarget.scrollTop}px)`;
+          }}>
+            <PianoRollCanvas
+              ref={canvasRef}
+              width={BEATS_VISIBLE * pixelsPerBeat}
+              height={visiblePitches.length * NOTE_HEIGHT}
+              scrollContainerRef={scrollContainerRef}
+              visiblePitches={visiblePitches}
+              notes={notes}
+              pixelsPerBeat={pixelsPerBeat}
+              gridSize={gridSize}
+              trackColor={trackColor}
+              selectedNoteIds={selectedNotes}
+              isPlaying={isPlaying}
+              selectionBox={selectionBox}
+              onMouseDown={handleCanvasMouseDown}
               onMouseMove={handleGridMouseMove}
               onMouseUp={handleGridMouseUp}
-              onMouseLeave={handleGridMouseUp}
-              style={{ width: BEATS_VISIBLE * pixelsPerBeat, height: visiblePitches.length * NOTE_HEIGHT }}
-            >
-              <PianoGrid
-                width={BEATS_VISIBLE * pixelsPerBeat}
-                height={visiblePitches.length * NOTE_HEIGHT}
-                pixelsPerBeat={pixelsPerBeat}
-                beatCount={BEATS_VISIBLE}
-                visiblePitches={visiblePitches}
-                noteHeight={NOTE_HEIGHT}
-                trackType={trackType}
-                gridSize={gridSize}
-              />
-
-              {/* Selection Marquee */}
-              {selectionBox && (
-                <div className={styles.marquee} style={{
-                  left: Math.min(selectionBox.x1, selectionBox.x2),
-                  top: Math.min(selectionBox.y1, selectionBox.y2),
-                  width: Math.abs(selectionBox.x2 - selectionBox.x1),
-                  height: Math.abs(selectionBox.y2 - selectionBox.y1)
-                }} />
-              )}
-
-              {/* Notes */}
-              {notes.map(note => {
-                const y = getYFromPitch(note.pitch);
-                if (y === -1) return null;
-                const selected = selectedNotes.has(note.id);
-                const noteWidth = note.duration * pixelsPerBeat;
-                return (
-                  <div
-                    key={note.id}
-                    className={`${styles.noteBlock} ${selected ? styles.noteBlockSelected : ''}`}
-                    style={{
-                      left: note.start * pixelsPerBeat,
-                      top: y,
-                      width: Math.max(4, noteWidth - 1),
-                      height: NOTE_HEIGHT - 1,
-                      backgroundColor: selected ? '#fff' : trackColor
-                    }}
-                    onMouseDown={(e) => {
-                      e.stopPropagation();
-                      const rect = (e.target as HTMLElement).getBoundingClientRect();
-                      const relX = e.clientX - rect.left;
-
-                      // Determine if resizing from edges
-                      let mode: 'move' | 'resize-left' | 'resize-right' = 'move';
-                      if (relX <= 6 && noteWidth > 12) {
-                        mode = 'resize-left';
-                      } else if (relX >= rect.width - 6) {
-                        mode = 'resize-right';
-                      }
-
-                      setDragStart({ x: e.clientX, y: e.clientY, notes });
-                      setDragMode(mode);
-
-                      if (!selectedNotes.has(note.id)) {
-                        setSelectedNotes(e.shiftKey ? new Set([...selectedNotes, note.id]) : new Set([note.id]));
-                      }
-                      playNotePreview(note.pitch);
-                    }}
-                    onDoubleClick={(e) => {
-                      e.stopPropagation();
-                      onNotesChange(notes.filter(n => n.id !== note.id));
-                      setSelectedNotes(prev => {
-                        const s = new Set(prev);
-                        s.delete(note.id);
-                        return s;
-                      });
-                    }}
-                  >
-                    {/* Left resize handle */}
-                    <div className={styles.resizeHandleLeft} />
-                    {/* Right resize handle */}
-                    <div className={styles.resizeHandleRight} />
-                  </div>
-                );
-              })}
-
-              {/* Playhead */}
-              {isPlaying && (
-                <PianoRollPlayhead
-                  pixelsPerBeat={pixelsPerBeat}
-                  beatsVisible={BEATS_VISIBLE}
-                />
-              )}
-            </div>
+            />
           </div>
         </div>
 
-        <div className={styles.prFooter}>
-          <div className={styles.shortcuts}>
+        <div style={{ height: '32px', padding: '0 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: '#0c0c14', borderTop: '1px solid #1e1e2d', fontSize: '10px', color: '#58587a' }}>
+          <div style={{ display: 'flex', gap: '16px' }}>
             <span><b>DRAG</b> Draw/Move</span>
             <span><b>DBL CLICK</b> Delete</span>
             <span><b>SHIFT+DRAG</b> Select</span>
             <span><b>CTRL±</b> Zoom</span>
           </div>
-          <div className={styles.zoomInfo}>ZOOM {Math.round(zoom)}%</div>
+          <div>ZOOM {Math.round(zoom)}%</div>
         </div>
       </div>
     </div>
   );
 }
+
+const PianoRoll = React.memo(PianoRollBase);
+export default PianoRoll;

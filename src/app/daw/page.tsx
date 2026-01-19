@@ -1008,7 +1008,7 @@ export default function DAWPage() {
     setShowAddTrackModal(false);
   };
 
-  const updateTrackNotes = (trackId: number, newNotes: Note[]) => {
+  const updateTrackNotes = useCallback((trackId: number, newNotes: Note[]) => {
     setTracks(prev => prev.map(t => {
       if (t.id !== trackId) return t;
 
@@ -1030,7 +1030,17 @@ export default function DAWPage() {
       clips[0] = { ...clips[0], notes: newNotes };
       return { ...t, clips };
     }));
-  };
+  }, [setTracks]);
+
+  const handlePianoRollClose = useCallback(() => {
+    setEditingTrackId(null);
+  }, []);
+
+  const handlePianoRollNotesChange = useCallback((newNotes: Note[]) => {
+    if (editingTrackId !== null) {
+      updateTrackNotes(editingTrackId, newNotes);
+    }
+  }, [editingTrackId, updateTrackNotes]);
 
   const PIXELS_PER_BEAT = 50;
   const selectedTrack = tracks.find(t => t.id === selectedTrackId);
@@ -1084,8 +1094,8 @@ export default function DAWPage() {
           trackType={editingTrack.type as any}
           instrument={editingTrack.instrument}
           notes={editingTrack.clips[0]?.notes || []}
-          onNotesChange={(newNotes) => updateTrackNotes(editingTrack.id, newNotes)}
-          onClose={() => setEditingTrackId(null)}
+          onNotesChange={handlePianoRollNotesChange}
+          onClose={handlePianoRollClose}
         />
       )}
 
