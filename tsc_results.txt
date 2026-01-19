@@ -1,0 +1,4 @@
+﻿src/app/daw/page.tsx(19,21): error TS2614: Module '"../../components/daw/PianoRoll"' has no exported member 'Note'. Did you mean to use 'import Note from "../../components/daw/PianoRoll"' instead?
+src/lib/engines/bass.ts(301,17): error TS2304: Cannot find name 'pitch'.
+src/lib/engines/bass.ts(302,20): error TS2304: Cannot find name 'pitch'.
+src/lib/engines/bass.ts(303,29): error TS2304: Cannot find name 'pitch'.

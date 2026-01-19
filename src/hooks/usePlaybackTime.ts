@@ -15,11 +15,11 @@ function subscribe(callback: () => void) {
 }
 
 // Getter functions
-function getPlaybackTime() {
+export function getPlaybackTime() {
     return currentPlaybackTime;
 }
 
-function getPlaybackBeat() {
+export function getPlaybackBeat() {
     return currentPlaybackBeat;
 }
 

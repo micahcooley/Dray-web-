@@ -245,6 +245,7 @@ class AudioEngine {
 
   // REGISTER SCHEDULER WORKLET
   // Completely rewritten to be simple and safe. No SharedArrayBuffer.
+  // This Worklet acts as a stable METRONOME independent of the main thread.
   public async registerSchedulerWorklet(): Promise<{ node: AudioWorkletNode } | null> {
     if (!this.context) return null;
 
@@ -254,79 +255,38 @@ class AudioEngine {
       class SchedulerProcessor extends AudioWorkletProcessor {
         constructor() {
           super();
-          this._nextTickTime = 0;
-          this._tickIndex = 0;
+          this._nextTick = 0;
+          this._interval = 0.025; // 25ms default (matches SCHEDULER_INTERVAL)
           this._running = false;
-          this._tempo = 120;
-          this._ticksPerBeat = 4; // 16th notes
-          this._lookahead = 0.1;
           
-          // CRITICAL: Bind message handler to port
-          this.port.onmessage = (event) => this.handleMessage(event);
-        }
-
-        static get parameterDescriptors() {
-          return [];
+          this.port.onmessage = (event) => {
+             if (event.data.type === 'start') this._running = true;
+             if (event.data.type === 'stop') this._running = false;
+             if (event.data.type === 'setTick' || event.data.type === 'reset') {
+                 // Reset next tick timing to now to ensure immediate scheduling
+                 this._nextTick = currentTime;
+             }
+             if (event.data.interval) this._interval = event.data.interval;
+          };
         }
 
         process(inputs, outputs, parameters) {
           if (!this._running) return true;
 
-          // Use global currentTime from AudioWorkletGlobalScope (no const)
           const now = currentTime;
-
-          // Initialize nextTickTime if first run or reset
-          if (this._nextTickTime === 0) {
-             this._nextTickTime = now + 0.05;
-          }
-
-          // Check if it's time for a tick
-          // We can process multiple ticks if we fell behind slightly, 
-          // but we cap it to avoid spiral of death
-          let loops = 0;
-          while (now + this._lookahead >= this._nextTickTime && loops < 50) {
-             // Send tick to main thread
-             this.port.postMessage({
-               type: 'tick',
-               tickIndex: this._tickIndex,
-               engineTime: this._nextTickTime
-             });
-
-             // Advance time
-             const secondsPerBeat = 60.0 / this._tempo;
-             const secondsPerTick = secondsPerBeat / this._ticksPerBeat;
-             
-             this._nextTickTime += secondsPerTick;
-             this._tickIndex++;
-             loops++;
+          
+          if (now >= this._nextTick) {
+             this.port.postMessage({ type: 'tick', time: now });
+             // Advance next tick time
+             // If we fell way behind (e.g. system sleep), reset to now + interval
+             if (now - this._nextTick > 0.1) {
+                this._nextTick = now + this._interval;
+             } else {
+                this._nextTick += this._interval;
+             }
           }
 
           return true;
-        }
-
-        handleMessage(event) {
-          const msg = event.data;
-          switch (msg.type) {
-            case 'start':
-              this._running = true;
-              this._nextTickTime = currentTime + 0.05; // Reset start time
-              break;
-            case 'stop':
-              this._running = false;
-              break;
-            case 'setTempo':
-              this._tempo = msg.tempo || 120;
-              break;
-            case 'setTick':
-              this._tickIndex = msg.tick || 0;
-              // Reset timing slightly to align
-              this._nextTickTime = currentTime + 0.05;
-              break;
-            case 'init':
-              this._tickIndex = msg.startTick || 0;
-              this._tempo = msg.tempo || 120;
-              break;
-          }
         }
       }
 
@@ -340,11 +300,6 @@ class AudioEngine {
 
       const node = new AudioWorkletNode(this.context, 'scheduler-processor');
 
-      // Handle messages from the processor if needed (though we mostly listen on the port in Scheduler.ts)
-      node.port.onmessage = (_event) => {
-        // Debugging or internal logic
-      };
-
       // Prevent GC
       node.connect(this.context.destination);
 
@@ -352,7 +307,7 @@ class AudioEngine {
 
     } catch (_e) {
       console.error("Failed to register scheduler worklet:", _e);
-      return null; // Logic will fallback to setInterval
+      return null;
     }
   }
 }

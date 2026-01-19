@@ -225,11 +225,12 @@ class ToneKeysEngine implements KeysEngineInterface {
             case 'Grand Piano':
             case 'Piano': {
                 // Sampler-less piano approximation using FM
+                // FIXED: Changed harmonicity from 2.5 to 1.0 to ensure integer harmonics (accurate scale)
                 const compressor = new ToneLib.Compressor({ threshold: -20, ratio: 3 });
 
                 synth = new ToneLib.PolySynth(ToneLib.FMSynth, {
-                    harmonicity: 2.5,
-                    modulationIndex: 6,
+                    harmonicity: 1.0,
+                    modulationIndex: 8,
                     oscillator: { type: 'sine' },
                     envelope: { attack: 0.001, decay: 2, sustain: 0.1, release: 1.5 },
                     modulation: { type: 'sine' },
@@ -311,12 +312,13 @@ class ToneKeysEngine implements KeysEngineInterface {
 
             case 'Upright Piano': {
                 // Warmer, woodier piano with less brightness than grand
+                // FIXED: Changed from 2.2 (inharmonic) to 1.0 (harmonic)
                 const compressor = new ToneLib.Compressor({ threshold: -18, ratio: 3 });
                 const filter = new ToneLib.Filter({ frequency: 3000, type: 'lowpass' });
 
                 synth = new ToneLib.PolySynth(ToneLib.FMSynth, {
-                    harmonicity: 2.2,
-                    modulationIndex: 5,
+                    harmonicity: 1.0,
+                    modulationIndex: 8,
                     oscillator: { type: 'sine' },
                     envelope: { attack: 0.002, decay: 1.5, sustain: 0.15, release: 1.2 },
                     modulation: { type: 'sine' },

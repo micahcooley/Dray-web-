@@ -52,12 +52,11 @@ export class AudioScheduler {
     }
 
     public async start() {
-        if (this.timerID) return;
+        if (this.timerID) return; // Legacy guard
+        if (this.workletNode && this.isRunning()) return; // Already running with worklet
 
         try {
             await audioEngine.initialize();
-
-            // Ensure context is running
             await audioEngine.resume();
 
             if (!this.engines) this.engines = await import('./toneEngine');
@@ -104,41 +103,59 @@ export class AudioScheduler {
         this.startTime = audioEngine.getNow() - this.startOffset;
         this.nextNoteTime = audioEngine.getNow();
 
-        // 1. Try to register and use AudioWorklet
+        // 1. REUSE OR CREATE WORKLETS
         let workletReady = false;
-        try {
-            const result = await audioEngine.registerSchedulerWorklet();
-            if (result && result.node) {
-                this.workletNode = result.node;
 
-                // Set up message handling
-                this.workletNode.port.onmessage = (ev) => this.handleWorkletMessage(ev.data);
+        // If we already have a worklet, just restart it
+        if (this.workletNode) {
+            console.log("AudioScheduler: Restarting existing Worklet");
+            this.workletNode.port.postMessage({ type: 'start' });
+            // Sync tick to current
+            this.workletNode.port.postMessage({ type: 'setTick', tick: this.current16thNote });
+            workletReady = true;
+        }
+        // Otherwise create new
+        else {
+            try {
+                const result = await audioEngine.registerSchedulerWorklet();
+                if (result && result.node) {
+                    this.workletNode = result.node;
 
-                // Initialize Worklet
-                this.workletNode.port.postMessage({
-                    type: 'init',
-                    startTick: this.current16thNote,
-                    tempo: this.tempoCache
-                });
+                    this.workletNode.port.onmessage = (ev) => this.handleWorkletMessage(ev.data);
 
-                this.workletNode.port.postMessage({ type: 'start' });
+                    this.workletNode.port.postMessage({
+                        type: 'start',
+                        interval: SCHEDULER_INTERVAL / 1000
+                    });
 
-                console.log("AudioScheduler: Using AudioWorklet for timing");
+                    console.log("AudioScheduler: Using AudioWorklet Metronome for timing");
+                    workletReady = true;
+                }
+            } catch (_e) {
+                console.warn('Worklet registration failed, falling back to interval', _e);
             }
-        } catch (e) {
-            console.warn('Worklet registration failed, falling back to interval', e);
         }
 
-        // 2. Always use setInterval for the main Lookahead loop (Issue: Worklet jitter)
-        // We use the worklet primarily to keep the AudioContext clock alive/robust if needed, 
-        // but the actual scheduling logic is now safe to run on Main Thread via Lookahead.
-        console.log('AudioScheduler: Starting Lookahead Scheduler');
-        this.timerID = setInterval(() => this.scheduler(), SCHEDULER_INTERVAL);
+        // 2. Fallback to setInterval
+        if (!workletReady) {
+            console.log('AudioScheduler: Starting Interval Scheduler (Fallback)');
+            this.timerID = setInterval(() => this.scheduler(), SCHEDULER_INTERVAL);
+        }
 
-        this.visualLoop();
+        // Ensure visual loop is also running
+        if (!this.rafId) {
+            this.rafId = requestAnimationFrame(() => this.visualLoop());
+        }
     }
 
     private scheduler() {
+        if (!this.isRunning()) return;
+
+        // Debug log to confirm scheduler heartbeat
+        // Debug log to confirm scheduler heartbeat
+        if (Math.random() < 0.01) console.log("Scheduler heartbeat", this.nextNoteTime, audioEngine.getNow(), this.isRunning());
+
+        // While there are notes that will need to play before the next interval
         // Lookahead scheduler loop
         try {
             const now = audioEngine.getNow();
@@ -196,10 +213,15 @@ export class AudioScheduler {
         }
     }
 
-    // Worklet message handler refactored to NOT schedule, just sync/debug
+    // Worklet message handler refactored to drive the loop
     private handleWorkletMessage(msg: any) {
         if (msg.type === 'tick') {
-            // We can use this to correct drift if needed, but for now rely on AudioContext time
+            // Log sample of ticks to verify flow
+            if (Math.random() < 0.005) {
+                console.log("[AudioScheduler] Received tick from Worklet", msg.time);
+            }
+            // Worklet says "wake up", so we run the scheduler
+            this.scheduler();
         }
     }
 
@@ -245,12 +267,10 @@ export class AudioScheduler {
         }
         this.timerID = null;
 
-        // Stop Worklet
+        // Stop Worklet (Pause it, don't disconnect - we reuse it)
         if (this.workletNode) {
             try {
                 this.workletNode.port.postMessage({ type: 'stop' });
-                // We don't disconnect/close to allow restart reuse logic if we wanted, 
-                // but for now let's keep it simple
             } catch (e) { console.error(e); }
         }
 
@@ -289,7 +309,11 @@ export class AudioScheduler {
     }
 
     public isRunning(): boolean {
-        return this.timerID !== null;
+        // We are running if we have a workaround timer OR (Worklet Node exists AND internal engines are running)
+        // Note: AudioContext state check is good but sometimes context runs while we are paused.
+        // We really need an internal flag. For now, rely on AudioContext state + Node existence as proxy,
+        // but 'stop' sets rafId to null. So rafId is a good proxy for "are we officially playing".
+        return this.rafId !== null;
     }
 
     // Scoped / Advance / Loop logic
@@ -374,9 +398,16 @@ export class AudioScheduler {
                     const note = clip.notes[nI] as MidiNote;
                     const absNoteStart = clipStartBeat + note.start;
                     const noteDiff = absNoteStart - currentBeat;
+
+                    // Log very close matches to debug if we are missing them
+                    if (Math.abs(noteDiff) < 0.25) {
+                        // console.log(`[Scheduler] Checking note: Track ${track.id} Pitch ${note.pitch} Start ${absNoteStart} Current ${currentBeat} Diff ${noteDiff}`);
+                    }
+
                     if (noteDiff >= 0 && noteDiff < stepSize) {
                         const key = `${tickIndex}:${track.id}:${note.id}`;
                         if (!this.scheduledNotes.has(key)) {
+                            console.log(`[AudioScheduler] Scheduled Note! Track ${track.id} Pitch ${note.pitch} @ ${time.toFixed(3)}s`);
                             this.scheduledNotes.add(key);
                             const noteTimeOffset = noteDiff * secondsPerBeat;
                             const preciseTime = time + noteTimeOffset;
@@ -465,12 +496,15 @@ export class AudioScheduler {
         };
     }
 
+
     private triggerNote(track: Track, note: MidiNote, instrument: string | undefined, time: number, durationSec: number) {
+        console.log(`[AudioScheduler] Triggering Note: Track=${track.id} Pitch=${note.pitch} Time=${time} Duration=${durationSec}`);
         try {
             if (track.type === 'drums') {
                 void this.engines?.toneDrumMachine.playNote(track.id, note.pitch, note.velocity, time);
             } else if (track.type === 'midi' || !track.type) {
-                const inst = instrument || 'Super Saw';
+                // FIX: Default to 'Grand Piano' to match PianoRoll preview default (Issue: "Random sounds")
+                const inst = instrument || 'Grand Piano';
                 const engine = getEngineForInstrument(inst);
 
                 switch (engine) {
@@ -500,7 +534,7 @@ export class AudioScheduler {
 
 
     private visualLoop() {
-        if (!this.timerID) return;
+        if (!this.isRunning()) return;
 
         const now = audioEngine.getNow();
         const songTime = now - this.startTime;
@@ -511,7 +545,10 @@ export class AudioScheduler {
 
         updatePlaybackTime(songTime, currentBeat);
 
-        this.onProgressCallbacks.forEach(cb => cb(songTime, this.current16thNote));
+        // FIX: Pass continuous (fractional) 16th notes instead of quantized 'current16thNote'
+        // This ensures subscribers like MasterPlayhead animate smoothly at 60fps
+        // instead of stepping every 125ms (8fps)
+        this.onProgressCallbacks.forEach(cb => cb(songTime, currentBeat * 4));
 
         this.rafId = requestAnimationFrame(() => this.visualLoop());
     }
@@ -541,7 +578,11 @@ export class AudioScheduler {
         }
 
         const currentBeat = (timeInSeconds * tempo) / 60;
-        updatePlaybackTime(timeInSeconds, currentBeat);
+        updatePlaybackTime(timeInSeconds, currentBeat); // Updates hook state (low freq)
+
+        // FIX: Force visual update for subscribers (MasterPlayhead) even if stopped
+        // This ensures the playhead snaps immediately when seek/stop occurs
+        this.onProgressCallbacks.forEach(cb => cb(timeInSeconds, currentBeat * 4));
 
         this.scheduledNotes.clear();
     }
@@ -550,7 +591,7 @@ export class AudioScheduler {
         this.instrumentCache.set(trackId, instrument);
     }
 
-    private setTempo(tempo: number) {
+    public setTempo(tempo: number) {
         this.tempoCache = tempo;
         if (this.workletNode) {
             this.workletNode.port.postMessage({ type: 'setTempo', tempo });
