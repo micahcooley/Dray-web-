@@ -278,8 +278,7 @@ function PianoRollBase({
                             </div>
                             <div className={styles.divider}></div>
                             <button
-                                className={styles.deleteBtn}
-                                style={{ color: selectedNotes.size === 0 ? '#58587a' : '#ed4245', cursor: selectedNotes.size === 0 ? 'default' : 'pointer' }}
+                                className={`${styles.deleteBtn} ${selectedNotes.size === 0 ? styles.deleteBtnDisabled : styles.deleteBtnActive}`}
                                 onClick={() => onNotesChange(notes.filter(n => !selectedNotes.has(n.id)))}
                                 disabled={selectedNotes.size === 0}
                             >
@@ -288,8 +287,7 @@ function PianoRollBase({
                         </div>
 
                         <button
-                            className={styles.playBtn}
-                            style={{ background: isPlaying ? '#ed4245' : '#5865f2' }}
+                            className={`${styles.playBtn} ${isPlaying ? styles.playBtnPlaying : styles.playBtnDefault}`}
                             onClick={handleTogglePlay}
                             onDoubleClick={handlePlayDoubleClick}
                         >
@@ -311,13 +309,8 @@ function PianoRollBase({
                                 return (
                                     <div
                                         key={pitch}
-                                        className={styles.sidebarKey}
-                                        style={{
-                                            height: NOTE_HEIGHT,
-                                            fontWeight: isC ? 'bold' : 'normal',
-                                            color: isC ? '#fff' : '#58587a',
-                                            background: isBlack ? '#0a0a0e' : 'transparent',
-                                        }}
+                                        className={`${styles.sidebarKey} ${isBlack ? styles.keyBlack : styles.keyWhite} ${isC ? styles.keyC : styles.keyNonC}`}
+                                        style={{ height: NOTE_HEIGHT }}
                                         onMouseDown={() => playNotePreview(pitch)}
                                     >
                                         {name}

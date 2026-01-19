@@ -140,6 +140,16 @@
     background: rgba(237, 66, 69, 0.1);
 }
 
+.deleteBtnDisabled {
+    color: #58587a;
+    cursor: default;
+}
+
+.deleteBtnActive {
+    color: #ed4245;
+    cursor: pointer;
+}
+
 /* ============================================ */
 /* TRANSPORT */
 /* ============================================ */
@@ -155,6 +165,14 @@
     cursor: pointer;
     box-shadow: 0 4px 12px rgba(88, 101, 242, 0.4);
     transition: transform 0.1s;
+}
+
+.playBtnDefault {
+    background: #5865f2;
+}
+
+.playBtnPlaying {
+    background: #ed4245;
 }
 
 .playBtn:active {
@@ -216,6 +234,24 @@
 
 .sidebarKey:hover {
     background: rgba(255, 255, 255, 0.05) !important;
+}
+
+.keyBlack {
+    background: #0a0a0e;
+}
+
+.keyWhite {
+    background: transparent;
+}
+
+.keyC {
+    font-weight: bold;
+    color: #fff;
+}
+
+.keyNonC {
+    font-weight: normal;
+    color: #58587a;
 }
 
 /* ============================================ */
