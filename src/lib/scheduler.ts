@@ -151,10 +151,6 @@ export class AudioScheduler {
     private scheduler() {
         if (!this.isRunning()) return;
 
-        // Debug log to confirm scheduler heartbeat
-        // Debug log to confirm scheduler heartbeat
-        if (Math.random() < 0.01) console.log("Scheduler heartbeat", this.nextNoteTime, audioEngine.getNow(), this.isRunning());
-
         // While there are notes that will need to play before the next interval
         // Lookahead scheduler loop
         try {
@@ -216,10 +212,6 @@ export class AudioScheduler {
     // Worklet message handler refactored to drive the loop
     private handleWorkletMessage(msg: any) {
         if (msg.type === 'tick') {
-            // Log sample of ticks to verify flow
-            if (Math.random() < 0.005) {
-                console.log("[AudioScheduler] Received tick from Worklet", msg.time);
-            }
             // Worklet says "wake up", so we run the scheduler
             this.scheduler();
         }
@@ -407,7 +399,7 @@ export class AudioScheduler {
                     if (noteDiff >= 0 && noteDiff < stepSize) {
                         const key = `${tickIndex}:${track.id}:${note.id}`;
                         if (!this.scheduledNotes.has(key)) {
-                            console.log(`[AudioScheduler] Scheduled Note! Track ${track.id} Pitch ${note.pitch} @ ${time.toFixed(3)}s`);
+                            // console.log(`[AudioScheduler] Scheduled Note! Track ${track.id} Pitch ${note.pitch} @ ${time.toFixed(3)}s`);
                             this.scheduledNotes.add(key);
                             const noteTimeOffset = noteDiff * secondsPerBeat;
                             const preciseTime = time + noteTimeOffset;
@@ -498,7 +490,7 @@ export class AudioScheduler {
 
 
     private triggerNote(track: Track, note: MidiNote, instrument: string | undefined, time: number, durationSec: number) {
-        console.log(`[AudioScheduler] Triggering Note: Track=${track.id} Pitch=${note.pitch} Time=${time} Duration=${durationSec}`);
+        // console.log(`[AudioScheduler] Triggering Note: Track=${track.id} Pitch=${note.pitch} Time=${time} Duration=${durationSec}`);
         try {
             if (track.type === 'drums') {
                 void this.engines?.toneDrumMachine.playNote(track.id, note.pitch, note.velocity, time);

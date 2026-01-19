@@ -1,0 +1,152 @@
+.mixer {
+  height: 180px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+  display: flex;
+  flex-direction: column;
+}
+
+.mixerHeader {
+  padding: 0.3rem 1rem;
+  font-size: 0.55rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  letter-spacing: 1px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.mixerChannels {
+  display: flex;
+  gap: 2px;
+  padding: 0.5rem;
+  height: calc(100% - 24px);
+  overflow-x: auto;
+}
+
+.channel {
+  width: 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.4rem;
+  background: var(--bg-deep);
+  border-radius: 4px;
+  border: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+  cursor: pointer;
+}
+
+.channel:hover { border-color: #2a2a34; }
+.channelMuted { opacity: 0.4; }
+.channelSoloed { border-color: #fee75c; }
+.channelSelected { border-color: #5865f2; background: rgba(88, 101, 242, 0.05); }
+
+.channelMaster {
+  width: 72px;
+  background: linear-gradient(180deg, rgba(88, 101, 242, 0.08) 0%, #0a0a10 100%);
+  border-color: rgba(88, 101, 242, 0.3);
+}
+
+.channelLabel {
+  font-size: 0.5rem;
+  font-weight: 600;
+  margin-bottom: 0.3rem;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  width: 100%;
+}
+
+.masterLabel { color: #5865f2 !important; }
+
+.channelMain { display: flex; gap: 3px; flex: 1; width: 100%; }
+
+.meterContainer { display: flex; gap: 2px; }
+.masterMeters { gap: 3px; }
+
+.meter {
+  width: 5px;
+  height: 100%;
+  background: var(--bg-deep);
+  border-radius: 2px;
+  position: relative;
+  overflow: hidden;
+}
+
+.masterMeter { width: 8px; }
+
+.meterFill {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  background: linear-gradient(to top, #57f287 0%, #57f287 55%, #fee75c 75%, #ff6b6b 90%, #ff4d4d 100%);
+  border-radius: 2px;
+}
+
+.masterFill { background: linear-gradient(to top, #5865f2 0%, #5865f2 55%, #eb459e 75%, #ff6b6b 90%, #ff4d4d 100%); }
+
+.faderContainer { flex: 1; display: flex; justify-content: center; }
+
+.faderTrack {
+  width: 6px;
+  height: 100%;
+  background: var(--border-subtle);
+  border-radius: 3px;
+  position: relative;
+}
+
+.masterFaderTrack { width: 10px; }
+
+.faderFill {
+  position: absolute;
+  bottom: 0;
+  width: 100%;
+  background: linear-gradient(to top, #3a3a4a 0%, #5a5a6a 100%);
+  border-radius: 3px;
+}
+
+.masterFaderFill { background: linear-gradient(to top, #4752c4 0%, #5865f2 100%); }
+
+/* Custom range slider for Fader */
+.faderInput {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  -webkit-appearance: slider-vertical;
+  writing-mode: bt-lr;
+  margin: 0;
+  z-index: 10;
+}
+
+.channelControls {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  margin-top: 0.25rem;
+}
+
+.channelButtons { display: flex; gap: 0.15rem; }
+
+.chBtn {
+  width: 16px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #1a1a24;
+  border: none;
+  color: #444;
+  font-size: 0.45rem;
+  font-weight: 700;
+  border-radius: 2px;
+  cursor: pointer;
+}
+
+.chBtn:hover { color: white; }
+.chBtnMuted { background: #ff4d4d; color: white; }
+.chBtnSoloed { background: #fee75c; color: #000; }

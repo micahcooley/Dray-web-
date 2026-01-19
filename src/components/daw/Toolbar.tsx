@@ -1,6 +1,7 @@
 'use client';
 
 import React from 'react';
+import { motion } from 'framer-motion';
 import { Play, Square, Circle, Sparkles, Settings, Share2 } from 'lucide-react';
 import { useProjectStore } from '../../store/useProjectStore';
 import { usePlaybackTime } from '../../hooks/usePlaybackTime';
@@ -22,8 +23,32 @@ export default function Toolbar() {
     if (!isPlaying) {
       await audioEngine.initialize();
       await audioEngine.resume();
+
+      try {
+        const engines = await import('../../lib/toneEngine');
+        await Promise.all([
+          engines.toneSynthEngine.initialize(),
+          engines.toneDrumMachine.initialize(),
+          engines.toneBassEngine.initialize(),
+          engines.toneKeysEngine.initialize(),
+          engines.toneVocalEngine.initialize(),
+          engines.toneFXEngine.initialize()
+        ]);
+      } catch (e) {
+        console.warn('Failed to start engines:', e);
+      }
     } else {
-      await audioEngine.suspend();
+      // Don't suspend context on pause, just stop transport
+      // But we can stop engines if needed
+      try {
+        const engines = await import('../../lib/toneEngine');
+        engines.toneSynthEngine.stopAll();
+        engines.toneBassEngine.stopAll();
+        engines.toneKeysEngine.stopAll();
+        engines.toneVocalEngine.stopAll();
+      } catch (e) {
+        console.warn('Failed to stop engines:', e);
+      }
     }
     togglePlay();
   };
@@ -38,12 +63,21 @@ export default function Toolbar() {
       </div>
 
       <div className="toolbar-section transport">
-        <button className="tool-btn" onClick={handleTogglePlay}>
+        <motion.button
+          className="tool-btn"
+          onClick={handleTogglePlay}
+          whileHover={{ scale: 1.1, backgroundColor: 'rgba(255,255,255,0.1)' }}
+          whileTap={{ scale: 0.95 }}
+        >
           {isPlaying ? <Square size={20} fill="currentColor" /> : <Play size={20} fill="currentColor" />}
-        </button>
-        <button className="tool-btn record">
+        </motion.button>
+        <motion.button
+          className="tool-btn record"
+          whileHover={{ scale: 1.1, backgroundColor: 'rgba(255,77,77,0.1)' }}
+          whileTap={{ scale: 0.95 }}
+        >
           <Circle size={18} fill="currentColor" />
-        </button>
+        </motion.button>
         <div className="time-display">
           <span className="time-value">{formatTime(playbackTime)}</span>
           <span className="tempo-value">{activeProject?.tempo || 120} BPM</span>
@@ -51,12 +85,34 @@ export default function Toolbar() {
       </div>
 
       <div className="toolbar-section actions">
-        <button className="btn-wingman">
+        <motion.button
+          className="btn-wingman"
+          whileHover={{ scale: 1.05, boxShadow: '0 0 20px rgba(235, 69, 158, 0.4)' }}
+          whileTap={{ scale: 0.95 }}
+        >
           <Sparkles size={16} /> Wingman AI
-        </button>
-        <button className="tool-btn"><Settings size={18} /></button>
-        <button className="tool-btn"><Share2 size={18} /></button>
-        <button className="btn-zenith">Open in Zenith</button>
+        </motion.button>
+        <motion.button
+          className="tool-btn"
+          whileHover={{ scale: 1.1, rotate: 90 }}
+          whileTap={{ scale: 0.9 }}
+        >
+          <Settings size={18} />
+        </motion.button>
+        <motion.button
+          className="tool-btn"
+          whileHover={{ scale: 1.1 }}
+          whileTap={{ scale: 0.9 }}
+        >
+          <Share2 size={18} />
+        </motion.button>
+        <motion.button
+          className="btn-zenith"
+          whileHover={{ scale: 1.05, borderColor: '#5865f2' }}
+          whileTap={{ scale: 0.95 }}
+        >
+          Open in Zenith
+        </motion.button>
       </div>
 
       <style jsx>{`
@@ -99,11 +155,7 @@ export default function Toolbar() {
           align-items: center;
           justify-content: center;
           border-radius: var(--radius-sm);
-          transition: background 0.2s;
-        }
-        .tool-btn:hover {
-          background: var(--bg-surface);
-          color: var(--accent-primary);
+          cursor: pointer;
         }
         .tool-btn.record:hover {
           color: #ff4d4d;
@@ -139,6 +191,7 @@ export default function Toolbar() {
           align-items: center;
           gap: 0.5rem;
           box-shadow: 0 0 15px rgba(235, 69, 158, 0.2);
+          cursor: pointer;
         }
         .btn-zenith {
           background: rgba(255, 255, 255, 0.05);
@@ -148,6 +201,7 @@ export default function Toolbar() {
           border-radius: var(--radius-md);
           font-size: 0.75rem;
           font-weight: 600;
+          cursor: pointer;
         }
       `}</style>
     </div>
