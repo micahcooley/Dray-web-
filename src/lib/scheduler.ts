@@ -13,6 +13,11 @@ export class AudioScheduler {
     private startTime = 0;
     private startOffset = 0;
 
+    // Configuration constants (from main branch - kept for future use)
+    private static readonly RETRY_DELAY_MS = 500;
+    private static readonly MAX_RETRIES = 2;
+    private static readonly TOTAL_ATTEMPTS = AudioScheduler.MAX_RETRIES + 1;
+
     // Cache for audio buffers and pending loads
     private audioBufferCache = new Map<string, AudioBuffer>();
     private pendingLoads = new Set<string>();

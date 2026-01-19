@@ -8,6 +8,8 @@ class AudioEngine {
   private initializationPromise: Promise<void> | null = null;
   private currentLatencyHint: 'interactive' | 'balanced' | 'playback' = 'playback';
   private currentLookAhead = 0.1;
+  private static contextCreationCount = 0;
+  private static hasWarnedMultipleContexts = false;
 
   // Track channels for mixing
   private trackChannels = new Map<number, any>();
@@ -48,6 +50,16 @@ class AudioEngine {
       if (!this.context) {
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         this.context = new AudioContextClass({ latencyHint: this.currentLatencyHint });
+        AudioEngine.contextCreationCount++;
+        
+        // Debug assertion: warn once if multiple contexts are created
+        if (AudioEngine.contextCreationCount > 1 && !AudioEngine.hasWarnedMultipleContexts) {
+          console.warn(
+            `[AudioEngine] Multiple AudioContext instances detected! Count: ${AudioEngine.contextCreationCount}`,
+            'This may cause timing issues and resource waste.'
+          );
+          AudioEngine.hasWarnedMultipleContexts = true;
+        }
       }
 
       // 3. Inject this native context into Tone.js
@@ -149,6 +161,17 @@ class AudioEngine {
     try { ch.panner.pan.rampTo(value / 100, 0.05); } catch (e) { ch.panner.pan.value = value / 100; }
   }
 
+  public setMasterVolume(value: number) {
+    if (!this._isInitialized || !this.Tone) return;
+    // value is 0-1 linear
+    const db = value <= 0.001 ? -Infinity : 20 * Math.log10(value);
+    try {
+        this.Tone.getDestination().volume.rampTo(db, 0.1);
+    } catch (e) {
+        console.error("Failed to set master volume", e);
+    }
+  }
+
   public getTrackLevels(): Record<number, number> {
     const out: Record<number, number> = {};
     if (!this.context || !this._isInitialized) return out;
@@ -245,6 +268,42 @@ class AudioEngine {
     // Store for future use
     console.log('Performance settings updated:', { latencyHint, lookAhead });
   }
+  
+  /**
+   * Preload an audio clip and return a Promise
+   * Centralizes audio clip preloading with proper error handling
+   */
+  public async preloadAudioClip(url: string): Promise<AudioBuffer> {
+    if (!this.context) {
+      await this.initialize();
+    }
+    
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch audio: ${response.status} ${response.statusText}`);
+    }
+    
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = await this.context!.decodeAudioData(arrayBuffer);
+    return audioBuffer;
+  }
+
+  // Debug utility: Get the count of AudioContext creations
+  public static getContextCreationCount(): number {
+    return AudioEngine.contextCreationCount;
+  }
+
+  // Debug utility: Assert only one context exists
+  public static assertSingleContext(): boolean {
+    if (AudioEngine.contextCreationCount > 1) {
+      console.error(
+        `[AudioEngine] ASSERTION FAILED: Multiple AudioContext instances created (${AudioEngine.contextCreationCount})!`,
+        'Only one AudioContext should exist for the entire application.'
+      );
+      return false;
+    }
+    return true;
+  }
 
   // Get scheduler node reference
   public getSchedulerNode(): AudioWorkletNode | null {
@@ -253,6 +312,7 @@ class AudioEngine {
 
   // REGISTER SCHEDULER WORKLET
   // Completely rewritten to be simple and safe. No SharedArrayBuffer.
+  // This Worklet acts as a stable METRONOME independent of the main thread.
   public async registerSchedulerWorklet(): Promise<{ node: AudioWorkletNode } | null> {
     if (!this.context) return null;
 
@@ -262,79 +322,38 @@ class AudioEngine {
       class SchedulerProcessor extends AudioWorkletProcessor {
         constructor() {
           super();
-          this._nextTickTime = 0;
-          this._tickIndex = 0;
+          this._nextTick = 0;
+          this._interval = 0.025; // 25ms default (matches SCHEDULER_INTERVAL)
           this._running = false;
-          this._tempo = 120;
-          this._ticksPerBeat = 4; // 16th notes
-          this._lookahead = 0.1;
           
-          // CRITICAL: Bind message handler to port
-          this.port.onmessage = (event) => this.handleMessage(event);
-        }
-
-        static get parameterDescriptors() {
-          return [];
+          this.port.onmessage = (event) => {
+             if (event.data.type === 'start') this._running = true;
+             if (event.data.type === 'stop') this._running = false;
+             if (event.data.type === 'setTick' || event.data.type === 'reset') {
+                 // Reset next tick timing to now to ensure immediate scheduling
+                 this._nextTick = currentTime;
+             }
+             if (event.data.interval) this._interval = event.data.interval;
+          };
         }
 
         process(inputs, outputs, parameters) {
           if (!this._running) return true;
 
-          // Use global currentTime from AudioWorkletGlobalScope (no const)
           const now = currentTime;
-
-          // Initialize nextTickTime if first run or reset
-          if (this._nextTickTime === 0) {
-             this._nextTickTime = now + 0.05;
-          }
-
-          // Check if it's time for a tick
-          // We can process multiple ticks if we fell behind slightly, 
-          // but we cap it to avoid spiral of death
-          let loops = 0;
-          while (now + this._lookahead >= this._nextTickTime && loops < 50) {
-             // Send tick to main thread
-             this.port.postMessage({
-               type: 'tick',
-               tickIndex: this._tickIndex,
-               engineTime: this._nextTickTime
-             });
-
-             // Advance time
-             const secondsPerBeat = 60.0 / this._tempo;
-             const secondsPerTick = secondsPerBeat / this._ticksPerBeat;
-             
-             this._nextTickTime += secondsPerTick;
-             this._tickIndex++;
-             loops++;
+          
+          if (now >= this._nextTick) {
+             this.port.postMessage({ type: 'tick', time: now });
+             // Advance next tick time
+             // If we fell way behind (e.g. system sleep), reset to now + interval
+             if (now - this._nextTick > 0.1) {
+                this._nextTick = now + this._interval;
+             } else {
+                this._nextTick += this._interval;
+             }
           }
 
           return true;
-        }
-
-        handleMessage(event) {
-          const msg = event.data;
-          switch (msg.type) {
-            case 'start':
-              this._running = true;
-              this._nextTickTime = currentTime + 0.05; // Reset start time
-              break;
-            case 'stop':
-              this._running = false;
-              break;
-            case 'setTempo':
-              this._tempo = msg.tempo || 120;
-              break;
-            case 'setTick':
-              this._tickIndex = msg.tick || 0;
-              // Reset timing slightly to align
-              this._nextTickTime = currentTime + 0.05;
-              break;
-            case 'init':
-              this._tickIndex = msg.startTick || 0;
-              this._tempo = msg.tempo || 120;
-              break;
-          }
         }
       }
 
