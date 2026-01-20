@@ -21,6 +21,22 @@ export const LOOKAHEAD_TIME = 0.1; // seconds
 export const SCHEDULER_INTERVAL = 25; // milliseconds
 export const NOTE_TOLERANCE = 0.001; // beats (more precise than 0.01)
 
+/**
+ * PREVIEW_TRACK_ID - Special trackId for preview notes in the Piano Roll UI
+ * 
+ * Purpose:
+ * - Used exclusively for monophonic UI preview playback (not part of timeline data)
+ * - Ensures preview notes are isolated from the main track's polyphonic playback
+ * - Allows engines to maintain separate state for preview vs. timeline notes
+ * 
+ * Behavior:
+ * - Preview notes are always monophonic (one note at a time)
+ * - Each new preview note stops the previous one to avoid overlapping chaos
+ * - Preview notes should be routed to avoid long effect tails when possible
+ * - This trackId should never appear in saved project data
+ */
+export const PREVIEW_TRACK_ID = -1;
+
 // ============================================
 // POLYPHONY & VOICE POOLING
 // ============================================

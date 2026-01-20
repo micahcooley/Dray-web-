@@ -133,7 +133,7 @@ const INITIAL_TRACKS: Track[] = [
   }
 ];
 
-import { SOUND_LIBRARY, type SoundCategoryType as SoundCategory } from '../../lib/constants';
+import { SOUND_LIBRARY, PREVIEW_TRACK_ID, type SoundCategoryType as SoundCategory } from '../../lib/constants';
 
 // UI Type for casting the readonly constant
 export type SubcategoryData = { readonly [subcategory: string]: readonly string[] } | readonly string[];
@@ -927,11 +927,11 @@ export default function DAWPage() {
     engines.toneKeysEngine.stopAll();
 
     if (category === 'Synths') {
-      // Play chord with selected synth preset (trackId=-1 for preview)
-      await engines.toneSynthEngine.playChord(-1, sound, [60, 64, 67], '2n', 0.7);
+      // Play chord with selected synth preset (uses PREVIEW_TRACK_ID for UI preview)
+      await engines.toneSynthEngine.playChord(PREVIEW_TRACK_ID, sound, [60, 64, 67], '2n', 0.7);
     } else if (category === 'Keys') {
       // ToneKeysEngine uses playChord with (trackId, preset, notes, duration, velocity)
-      await engines.toneKeysEngine.playChord(-1, sound, [60, 64, 67], '2n', 0.75);
+      await engines.toneKeysEngine.playChord(PREVIEW_TRACK_ID, sound, [60, 64, 67], '2n', 0.75);
     } else if (category === 'Bass') {
       // Each bass type plays at LOW octaves to showcase the bass character
       const bassPitches: Record<string, number> = {

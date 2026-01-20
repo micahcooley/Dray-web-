@@ -2,6 +2,7 @@ import { ensureTone } from '../toneWrapper';
 import type { ToneLibType } from '../toneWrapper';
 import { audioEngine } from '../audioEngine';
 import type { FXEngineInterface } from '../engineTypes';
+import { PREVIEW_TRACK_ID } from '../constants';
 
 /**
  * ToneFXEngine - Sound effects synthesis
@@ -147,24 +148,45 @@ class ToneFXEngine implements FXEngineInterface {
     }
 
     /**
-     * Preview an FX - monophonic (stops previous preview before starting new one)
-     * Signature: (trackId, preset, note, velocity) - standardized across all engines
-     * For FX, 'preset' is the FX type and 'note' is ignored.
+     * Preview an FX sound - monophonic UI-only playback (stops previous preview before starting new one)
+     * 
+     * Contract:
+     * - Uses PREVIEW_TRACK_ID for isolated preview playback (not part of timeline data)
+     * - Monophonic: Only one preview FX plays at a time to avoid UI chaos
+     * - Cleanup: Fully stops and disposes previous preview nodes before starting new one
+     * - Isolation: Preview FX are separate from main track playback
+     * - FX-specific: For FX engine, 'preset' is the FX type and 'note' is ignored
+     * 
+     * Note: FX sounds often include heavy reverb/delay tails. Each FX node is disposed
+     * after completion to prevent memory leaks. Long-tail FX may overlap briefly during
+     * rapid preview invocation - this is acceptable for UI responsiveness.
+     * 
+     * @param trackId - Should always be PREVIEW_TRACK_ID for preview playback
+     * @param preset - FX type name (e.g., 'Riser', 'Impact', 'Laser')
+     * @param note - Ignored for FX engine (kept for interface consistency)
+     * @param velocity - FX intensity (0-1, default 0.8)
      */
     async previewNote(trackId: number, preset: string, note: number | string = 60, velocity: number = 0.8) {
         if (!this.initialized) await this.initialize();
 
-        // Stop previous preview node immediately
+        // Stop previous preview node immediately to prevent audio bleed
+        // Dispose the node to free up memory and disconnect audio graph
         if (this.lastPreviewNode) {
             try {
-                if (this.lastPreviewNode.stop) this.lastPreviewNode.stop();
-                if (this.lastPreviewNode.dispose) this.lastPreviewNode.dispose();
-            } catch (e) { }
+                if (this.lastPreviewNode.stop) {
+                    this.lastPreviewNode.stop();
+                }
+                if (this.lastPreviewNode.dispose) {
+                    this.lastPreviewNode.dispose();
+                }
+            } catch (e) {
+                // Silently handle cleanup errors to avoid blocking new preview
+            }
             this.lastPreviewNode = null;
         }
 
-        // For FX, we just call playFX. 
-        // Note: FX often have their own internal cleanup logic.
+        // For FX, we call playFX which creates and schedules cleanup for nodes
+        // Note: FX often have their own internal cleanup logic via scheduleCleanup()
         await this.playFX(trackId, preset, velocity, 1);
     }
 

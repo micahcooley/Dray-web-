@@ -5,6 +5,7 @@ import { Mic, MicOff, CircleDot, Square, Music, Download, X } from 'lucide-react
 import { pitchDetector, PitchResult, MIDINoteEvent } from '../../lib/pitchDetector';
 import { audioEngine } from '../../lib/audioEngine';
 import { toneSynthEngine } from '../../lib/toneEngine';
+import { PREVIEW_TRACK_ID } from '../../lib/constants';
 import type { MidiNote } from '../../lib/types';
 import styles from './humtomidi.module.css';
 
@@ -59,8 +60,8 @@ export default function HumToMidi({ onNotesRecorded, onClose, trackColor = '#586
                 if (isRecording) {
                     setRecordedNotes(prev => [...prev, note]);
                 }
-                // Play the detected note (trackId=-1 for preview)
-                toneSynthEngine.playNote(-1, 'Grand Piano', note.pitch, '8n', 0.5);
+                // Play the detected note (uses PREVIEW_TRACK_ID for UI preview)
+                toneSynthEngine.playNote(PREVIEW_TRACK_ID, 'Grand Piano', note.pitch, '8n', 0.5);
             }
         );
     }, [isRecording]);

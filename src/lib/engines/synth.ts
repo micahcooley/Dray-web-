@@ -2,6 +2,7 @@ import { ensureTone } from '../toneWrapper';
 import type { ToneLibType } from '../toneWrapper';
 import { audioEngine } from '../audioEngine';
 import { globalReverbs } from './globalReverb';
+import { PREVIEW_TRACK_ID } from '../constants';
 
 // Efficient Synth Engine using Tone.PolySynth for voice pooling
 // Reduces CPU usage by ~70% compared to manual node creation per note.
@@ -579,21 +580,44 @@ class ToneSynthEngine {
     }
 
     /**
-     * Preview a note - monophonic (stops previous preview note before starting new one)
-     * Used for UI feedback in Piano Roll to avoid overlapping chaos.
-     * OPTIMIZED: Uses synchronous cache lookup for instant playback on cached synths.
+     * Preview a note - monophonic UI-only playback (stops previous preview note before starting new one)
+     * 
+     * Contract:
+     * - Uses PREVIEW_TRACK_ID for isolated preview playback (not part of timeline data)
+     * - Monophonic: Only one preview note plays at a time to avoid UI chaos
+     * - Cleanup: Fully stops and releases previous preview note before starting new one
+     * - Optimization: Synchronous cache lookup for instant playback on cached synths
+     * - Isolation: Preview notes are separate from main track polyphonic playback
+     * 
+     * Note: Preview notes may include effect tails from reverb/delay. Consider routing
+     * to a dry bus in the future if effect tails become problematic for UI responsiveness.
+     * 
+     * @param trackId - Should always be PREVIEW_TRACK_ID for preview playback
+     * @param preset - Synth preset name (e.g., 'Super Saw', 'Analog Pad')
+     * @param note - MIDI note number or note name (e.g., 60 or 'C4')
+     * @param velocity - Note velocity (0-1, default 0.7)
      */
     previewNote(trackId: number, preset: string, note: number | string, velocity: number = 0.7) {
         const key = `${trackId}-${preset}`;
 
         // Stop previous preview note if it was on any synth (sync, fast)
+        // This prevents audio bleed and ensures monophonic preview behavior
         if (this.lastPreviewNote) {
             try {
                 const prevBundle = this.trackSynths.get(this.lastPreviewNote.key);
-                if (prevBundle) {
-                    prevBundle.synth.triggerRelease(this.lastPreviewNote.note);
+                if (prevBundle && prevBundle.synth) {
+                    // Fully release the previous note to stop oscillators and cancel envelopes
+                    if (prevBundle.synth.triggerRelease) {
+                        prevBundle.synth.triggerRelease(this.lastPreviewNote.note);
+                    }
+                    // Alternative: releaseAll stops all voices on the synth
+                    if (prevBundle.synth.releaseAll) {
+                        prevBundle.synth.releaseAll();
+                    }
                 }
-            } catch (e) { }
+            } catch (e) {
+                // Silently handle cleanup errors to avoid blocking new preview
+            }
         }
 
         // FAST PATH: If synth is already cached, play immediately (no await!)

@@ -26,7 +26,8 @@ import {
     DRUM_MAP,
     NOTE_NAMES,
     BLACK_KEY_INDICES,
-    getEngineForInstrument
+    getEngineForInstrument,
+    PREVIEW_TRACK_ID
 } from '../../lib/constants';
 import type { MidiNote } from '../../lib/types';
 import styles from './pianoroll.module.css';
@@ -85,7 +86,8 @@ function PianoRollBase({
         }
     }, [trackType]);
 
-    // Audio Preview Logic
+    // Audio Preview Logic - monophonic UI-only playback
+    // Uses PREVIEW_TRACK_ID to isolate preview notes from main timeline playback
     const playNotePreview = useCallback((pitch: number) => {
         if (lastPreviewPitch.current === pitch) return;
         lastPreviewPitch.current = pitch;
@@ -96,16 +98,22 @@ function PianoRollBase({
 
             if (trackType === 'drums') {
                 const sound = DRUM_MAP[pitch];
-                if (sound) await toneDrumMachine.playKick(-1, sound, 0.8);
+                // Use previewNote for drums to ensure proper cleanup
+                if (sound) await toneDrumMachine.previewNote(PREVIEW_TRACK_ID, pitch, 0.8);
             } else {
                 const targetInstrument = instrument || 'Grand Piano';
                 const engineName = getEngineForInstrument(targetInstrument);
+                // All engines use previewNote for monophonic UI preview with proper cleanup
                 if (engineName === 'bass') {
-                    toneBassEngine.playNote(-1, pitch, '8n', 0.8, targetInstrument);
+                    toneBassEngine.previewNote(PREVIEW_TRACK_ID, targetInstrument, pitch, 0.8);
                 } else if (engineName === 'keys') {
-                    toneKeysEngine.playChord(-1, targetInstrument, [pitch], '8n', 0.8);
+                    toneKeysEngine.previewNote(PREVIEW_TRACK_ID, targetInstrument, pitch, 0.8);
+                } else if (engineName === 'vocal') {
+                    toneVocalEngine.previewNote(PREVIEW_TRACK_ID, targetInstrument, pitch, 0.8);
+                } else if (engineName === 'fx') {
+                    toneFXEngine.previewNote(PREVIEW_TRACK_ID, targetInstrument, pitch, 0.8);
                 } else {
-                    toneSynthEngine.previewNote(-1, targetInstrument, pitch, 0.8);
+                    toneSynthEngine.previewNote(PREVIEW_TRACK_ID, targetInstrument, pitch, 0.8);
                 }
             }
         };

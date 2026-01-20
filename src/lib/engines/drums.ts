@@ -1,6 +1,7 @@
 import { ensureTone } from '../toneWrapper';
 import type { ToneLibType } from '../toneWrapper';
 import { audioEngine } from '../audioEngine';
+import { PREVIEW_TRACK_ID } from '../constants';
 
 /**
  * Kit-specific sound parameters
@@ -158,6 +159,15 @@ class ToneDrumMachine {
         return this.initializationPromise;
     }
 
+    /**
+     * Set the active drum kit
+     * 
+     * NOTE: This operation is synchronous and uses pre-cached drum bundles.
+     * No async sample loading occurs during kit switching, ensuring instant preview playback.
+     * The kit parameter only changes which preset parameters are used when playNote() is called.
+     * 
+     * @param kit - Kit name (e.g., '808', '909', 'Trap', etc.)
+     */
     setKit(kit: string) {
         if (DRUM_KITS[kit]) {
             this.currentKit = kit;
@@ -382,10 +392,25 @@ class ToneDrumMachine {
     }
 
     /**
-     * Preview a drum note
+     * Preview a drum note - monophonic UI-only playback
+     * 
+     * Contract:
+     * - Uses PREVIEW_TRACK_ID for isolated preview playback (not part of timeline data)
+     * - Monophonic: Each drum hit is separate, no explicit cleanup needed for percussive sounds
+     * - Cleanup: Drum voices automatically release after their envelope completes
+     * - Synchronous: Uses cached drum bundles for instant playback (no async latency)
+     * - Isolation: Preview uses the same voice pool but doesn't interfere with timeline playback
+     * 
+     * Note: setKit() is synchronous and doesn't trigger sample loading, so kit changes
+     * during preview are instant. Drum bundles are pre-created and cached per trackId+kit.
+     * 
+     * @param trackId - Should always be PREVIEW_TRACK_ID for preview playback
+     * @param pitch - MIDI drum note number (e.g., 36 = Kick, 38 = Snare)
+     * @param velocity - Note velocity (0-1, default 0.8)
      */
     async previewNote(trackId: number, pitch: number, velocity: number = 0.8) {
-        // Just call playNote, it handles instantiation/pooling
+        // Drums are percussive and self-limiting, so we just call playNote
+        // The envelope handles cleanup automatically - no manual stopping needed
         await this.playNote(trackId, pitch, velocity);
     }
 
