@@ -2,35 +2,76 @@
 
 export const dynamic = 'force-dynamic';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useRef } from 'react';
 // Note: tone engines are imported dynamically to avoid creating AudioContext on module load
 
 import {
-  Music, Drum, FileAudio, Plus, X
+  Play, Square, Circle, SkipBack, SkipForward,
+  Sparkles, Settings, Share2, Plus, ChevronDown, ChevronRight,
+  Volume2, Folder, Wand2, Send, Mic,
+  ChevronLeft, X, Music, Drum, FileAudio, Undo2, Redo2
 } from 'lucide-react';
 import { useHistory } from '../../hooks/useHistory';
 import { useProjectStore } from '../../store/useProjectStore';
 import { audioEngine } from '../../lib/audioEngine';
 import { grokService } from '../../lib/grokService';
+import { SYNTH_PRESETS } from '../../lib/synthEngine'; // Imported for presets list
 import PianoRoll, { Note } from '../../components/daw/PianoRoll';
+import PanKnob from '../../components/daw/PanKnob';
+import VolumeMeter from '../../components/daw/VolumeMeter';
 import AudioEditor from '../../components/daw/AudioEditor';
+import TimeDisplay from '../../components/daw/TimeDisplay';
 import SettingsModal from '../../components/daw/SettingsModal';
 import WingmanPanel from '../../components/daw/WingmanPanel';
 import SynthEditorPanel from '../../components/daw/SynthEditorPanel';
 import { getProjectContext, parseWingmanResponse } from '../../lib/wingmanBridge';
 import { stemSeparator } from '../../lib/stemSeparator';
+import MasterPlayhead from '../../components/daw/MasterPlayhead';
 import AudioConversionModal from '../../components/daw/AudioConversionModal';
 import { PatternGenerators } from '../../lib/patternGenerators';
-import type { Track, Clip, MidiNote, TrackType } from '../../lib/types';
+import type { Track, Clip, MidiNote, TrackType, AudioWaveform } from '../../lib/types';
 import { SOUND_TYPE_MAP } from '../../lib/types';
-import Timeline from '../../components/daw/Timeline';
-import TrackList from '../../components/daw/TrackList';
-import Toolbar from '../../components/daw/Toolbar';
-import { SOUND_LIBRARY, type SoundCategoryType as SoundCategory } from '../../lib/constants';
-import { Folder, ChevronDown, ChevronRight, Volume2 } from 'lucide-react';
+import nextDynamic from 'next/dynamic';
+const ThemeToggle = nextDynamic(() => import('../../components/ThemeToggle'), { ssr: false });
 
-// UI Type for casting the readonly constant
-export type SubcategoryData = { readonly [subcategory: string]: readonly string[] } | readonly string[];
+// SVG Icons
+const BeatIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <rect x="2" y="6" width="4" height="12" rx="1" />
+    <rect x="10" y="3" width="4" height="18" rx="1" />
+    <rect x="18" y="8" width="4" height="8" rx="1" />
+  </svg>
+);
+
+const MelodyIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <path d="M9 18V5l12-2v13" />
+    <circle cx="6" cy="18" r="3" />
+    <circle cx="18" cy="16" r="3" />
+  </svg>
+);
+
+const MixIcon = () => (
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+    <line x1="4" y1="21" x2="4" y2="14" />
+    <line x1="12" y1="21" x2="12" y2="12" />
+    <line x1="20" y1="21" x2="20" y2="16" />
+    <circle cx="4" cy="12" r="2" />
+    <circle cx="12" cy="10" r="2" />
+    <circle cx="20" cy="14" r="2" />
+  </svg>
+);
+
+// Initial tracks with real MIDI data
+const formatTime = (seconds: number) => {
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  const ms = Math.floor((seconds % 1) * 1000);
+  return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${ms.toString().padStart(3, '0')}`;
+};
+
+// Track colors by type
+const TRACK_COLORS = ['#eb459e', '#5865f2', '#57f287', '#fee75c', '#ed4245', '#9b59b6', '#3498db', '#1abc9c'];
 
 // Initial tracks with real MIDI data
 const INITIAL_TRACKS: Track[] = [
@@ -92,8 +133,18 @@ const INITIAL_TRACKS: Track[] = [
   }
 ];
 
-// Track colors by type
-const TRACK_COLORS = ['#eb459e', '#5865f2', '#57f287', '#fee75c', '#ed4245', '#9b59b6', '#3498db', '#1abc9c'];
+import { SOUND_LIBRARY, type SoundCategoryType as SoundCategory } from '../../lib/constants';
+
+// UI Type for casting the readonly constant
+export type SubcategoryData = { readonly [subcategory: string]: readonly string[] } | readonly string[];
+
+// Helper to flatten subcategories for compatibility
+export function getAllSoundsInCategory(category: SoundCategory): readonly string[] {
+  const data = (SOUND_LIBRARY as any)[category];
+  if (!data) return [];
+  if (Array.isArray(data)) return data;
+  return Object.values(data).flat() as readonly string[];
+}
 
 type WingmanMessage = { role: 'ai' | 'user'; text: string };
 
@@ -193,7 +244,7 @@ export default function DAWPage() {
   const [wingmanMessages, setWingmanMessages] = useState<WingmanMessage[]>([
     { role: 'ai', text: "Hey! I'm Wingman, your AI producer. What would you like to create today?" }
   ]);
-  const [masterVolume, setMasterVolume] = useState(0.85); // Normalized 0-1
+  const [masterVolume, setMasterVolume] = useState(85);
   const [gridDivision, setGridDivision] = useState<number>(4); // 1=1/1, 2=1/2, 4=1/4, 8=1/8, 16=1/16
 
   // Context menu state
@@ -265,6 +316,92 @@ export default function DAWPage() {
       } catch (e) { /* ignore in prod */ }
     })();
   }, [activeProject, createProject]);
+
+  const handleTogglePlay = async () => {
+    if (!isPlaying) {
+      await audioEngine.initialize();
+      await audioEngine.resume();
+      // Dynamically import engines to avoid creating AudioContext before user gesture
+      const engines = await import('../../lib/toneEngine');
+      await Promise.all([
+        engines.toneSynthEngine.initialize(),
+        engines.toneDrumMachine.initialize(),
+        engines.toneBassEngine.initialize(),
+        engines.toneKeysEngine.initialize(),
+        engines.toneVocalEngine.initialize(),
+        engines.toneFXEngine.initialize()
+      ]);
+      togglePlay();
+    } else {
+      togglePlay();
+      try {
+        const engines = await import('../../lib/toneEngine');
+        engines.toneSynthEngine.stopAll();
+        engines.toneBassEngine.stopAll();
+        engines.toneKeysEngine.stopAll();
+        engines.toneVocalEngine.stopAll();
+      } catch (e) {
+        console.warn('Failed to stop engines:', e);
+      }
+    }
+  };
+
+  // ... inside DAWPage component
+
+  const handleWingmanSend = useCallback(async () => {
+    if (!wingmanInput.trim() || isLoading) return;
+
+    // 1. Prepare user message
+    const userMsg = { role: 'user' as const, text: wingmanInput };
+    setWingmanMessages(prev => [...prev, userMsg]);
+    setWingmanInput('');
+    setIsLoading(true);
+
+    try {
+      // 2. Build Context
+      const context = getProjectContext(
+        activeProject,
+        tracks,
+        isPlaying,
+        // Use AudioContext time if available, otherwise 0
+        audioEngine.getState() !== null ? audioEngine.getContext().currentTime : 0,
+        selectedTrackId,
+        SOUND_LIBRARY,
+        canUndo,
+        canRedo,
+        lastAction
+      );
+
+      // 3. Call Grok
+      // We map our simplified WingmanMessage to GrokMessage
+      const chatHistory = wingmanMessages.map(m => ({
+        role: m.role === 'ai' ? 'assistant' : 'user',
+        content: m.text
+      })) as any[];
+
+      chatHistory.push({ role: 'user', content: userMsg.text });
+
+      const rawResponse = await grokService.chat(chatHistory, context, false);
+
+      // 4. Parse Response for Actions
+      const { text, actions } = parseWingmanResponse(rawResponse);
+
+      // 5. Display Text Response
+      setWingmanMessages(prev => [...prev, { role: 'ai', text }]);
+
+      // 6. Execute Actions
+      if (actions.length > 0) {
+        console.log('Executing Wingman Actions:', actions);
+        executeWingmanActions(actions);
+      }
+
+    } catch (err) {
+      console.error(err);
+      setWingmanMessages(prev => [...prev, { role: 'ai', text: "Sorry, I encountered an issue connecting to my brain." }]);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [wingmanInput, isLoading, wingmanMessages, activeProject, tracks, isPlaying, selectedTrackId]);
 
   // Execute the list of actions returned by the AI
   const executeWingmanActions = (actions: any[]) => {
@@ -380,6 +517,11 @@ export default function DAWPage() {
               if (trackIndex !== -1) {
                 const track = newTracks[trackIndex];
                 let notes: any[] = [];
+
+                // Import generator dynamically or use if imported at top
+                // Since we can't easily dynamic import in this flow without async, we assume PatternGenerators is available
+                // or we use a simple inline switch if avoiding imports, but we should import it.
+                // For now, let's assume we added the import. If not, this chunk needs the import too.
 
                 if (track.type === 'drums' || style.includes('trap') || style.includes('house')) {
                   notes = PatternGenerators.generateDrumPattern(style, length || 4);
@@ -579,61 +721,6 @@ export default function DAWPage() {
       return newTracks;
     });
   };
-
-  const handleWingmanSend = useCallback(async () => {
-    if (!wingmanInput.trim() || isLoading) return;
-
-    // 1. Prepare user message
-    const userMsg = { role: 'user' as const, text: wingmanInput };
-    setWingmanMessages(prev => [...prev, userMsg]);
-    setWingmanInput('');
-    setIsLoading(true);
-
-    try {
-      // 2. Build Context
-      const context = getProjectContext(
-        activeProject,
-        tracks,
-        isPlaying,
-        // Use AudioContext time if available, otherwise 0
-        audioEngine.getState() !== null ? audioEngine.getContext().currentTime : 0,
-        selectedTrackId,
-        SOUND_LIBRARY,
-        canUndo,
-        canRedo,
-        lastAction
-      );
-
-      // 3. Call Grok
-      // We map our simplified WingmanMessage to GrokMessage
-      const chatHistory = wingmanMessages.map(m => ({
-        role: m.role === 'ai' ? 'assistant' : 'user',
-        content: m.text
-      })) as any[];
-
-      chatHistory.push({ role: 'user', content: userMsg.text });
-
-      const rawResponse = await grokService.chat(chatHistory, context, false);
-
-      // 4. Parse Response for Actions
-      const { text, actions } = parseWingmanResponse(rawResponse);
-
-      // 5. Display Text Response
-      setWingmanMessages(prev => [...prev, { role: 'ai', text }]);
-
-      // 6. Execute Actions
-      if (actions.length > 0) {
-        console.log('Executing Wingman Actions:', actions);
-        executeWingmanActions(actions);
-      }
-
-    } catch (err) {
-      console.error(err);
-      setWingmanMessages(prev => [...prev, { role: 'ai', text: "Sorry, I encountered an issue connecting to my brain." }]);
-    } finally {
-      setIsLoading(false);
-    }
-  }, [wingmanInput, isLoading, wingmanMessages, activeProject, tracks, isPlaying, selectedTrackId]);
 
   const handleSuggestionClick = (type: string) => {
     const prompts: Record<string, string> = {
@@ -1094,16 +1181,65 @@ export default function DAWPage() {
       )}
 
       {/* Toolbar */}
-      <Toolbar
-        onSettingsClick={() => setShowSettings(true)}
-        onWingmanClick={() => setWingmanOpen(!wingmanOpen)}
-        undo={undo}
-        redo={redo}
-        canUndo={canUndo}
-        canRedo={canRedo}
-        gridDivision={gridDivision}
-        setGridDivision={setGridDivision}
-      />
+      <header className="toolbar">
+        <div className="toolbar-left">
+          <div className="logo">
+            <Sparkles size={20} className="logo-icon" />
+            <span className="logo-text">Drey</span>
+          </div>
+          <div className="project-name">{activeProject?.name || 'Untitled'}</div>
+          <div className="history-controls">
+            <button
+              className={`history-btn ${!canUndo ? 'disabled' : ''}`}
+              onClick={undo}
+              disabled={!canUndo}
+              title="Undo (Ctrl+Z)"
+            >
+              <Undo2 size={16} />
+            </button>
+            <button
+              className={`history-btn ${!canRedo ? 'disabled' : ''}`}
+              onClick={redo}
+              disabled={!canRedo}
+              title="Redo (Ctrl+Shift+Z)"
+            >
+              <Redo2 size={16} />
+            </button>
+          </div>
+          <div className="grid-controls">
+            <select
+              className="grid-select"
+              value={gridDivision}
+              onChange={(e) => setGridDivision(Number(e.target.value))}
+              title="Grid Division"
+            >
+              <option value={1}>1/1</option>
+              <option value={2}>1/2</option>
+              <option value={4}>1/4</option>
+              <option value={8}>1/8</option>
+              <option value={16}>1/16</option>
+            </select>
+          </div>
+        </div>
+        <div className="transport">
+          <button className="transport-btn" onClick={() => setCurrentTime(0)}><SkipBack size={16} /></button>
+          <button className="transport-btn play" onClick={handleTogglePlay}>
+            {isPlaying ? <Square size={18} fill="currentColor" /> : <Play size={18} fill="currentColor" />}
+          </button>
+          <button className="transport-btn record"><Circle size={16} /></button>
+          <div className="time-display"><TimeDisplay /></div>
+          <div className="tempo-display">
+            <span className="tempo-value">128</span>
+            <span className="tempo-label">BPM</span>
+          </div>
+          <div className="signature">4/4</div>
+        </div>
+        <div className="toolbar-right">
+          <ThemeToggle />
+          <button className="action-btn" onClick={() => setShowSettings(true)}><Settings size={18} /></button>
+          <button className="action-btn"><Share2 size={18} /></button>
+        </div>
+      </header>
 
       {/* Main Content */}
       <div className="main-content">
@@ -1119,39 +1255,178 @@ export default function DAWPage() {
 
         {/* Timeline */}
         <main className="timeline-section">
-          <Timeline
-            pixelsPerBeat={PIXELS_PER_BEAT}
-            tempo={activeProject?.tempo || 120}
-            onSetTime={(time) => {
-              setCurrentTime(time);
+          {/* Click ruler to seek playhead */}
+          <div
+            className="timeline-ruler"
+            onClick={(e) => {
+              const rect = e.currentTarget.getBoundingClientRect();
+              const x = e.clientX - rect.left;
+              const headerWidth = 170;
+              if (x > headerWidth) {
+                const pixels = x - headerWidth;
+                const beat = pixels / PIXELS_PER_BEAT;
+                const time = beat * (60 / (activeProject?.tempo || 120));
+                setCurrentTime(time);
+                // If playing, we should restart transport at new time - but simplest is just update state for now
+              }
             }}
-          />
-          <TrackList
-            tracks={tracks}
-            gridDivision={gridDivision}
-            pixelsPerBeat={PIXELS_PER_BEAT}
-            isPlaying={isPlaying}
-            selectedTrackId={selectedTrackId}
-            draggedTrackId={draggedTrackId}
-            dropTargetId={dropTargetId}
-            onSelectTrack={handleSelectTrack}
-            onEditTrack={(id) => setEditingTrackId(id)}
-            onContextMenu={handleTrackContextMenu}
-            onMuteTrack={handleTrackMute}
-            onSoloTrack={handleTrackSolo}
-            onVolumeChange={handleTrackVolumeChange}
-            onPanChange={(id, pan) => setTracks(prev => prev.map(t => t.id === id ? { ...t, pan } : t))}
-            onDragStart={handleDragStart}
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            onDragEnd={handleDragEnd}
-            onAddTrackClick={() => setShowAddTrackModal(true)}
-            onAddTrackContextMenu={(e) => {
-              e.preventDefault();
-              setShowAddTrackModal(true);
-            }}
-          />
+            style={{ cursor: 'pointer' }}
+          >
+            <div className="ruler-track-space"></div>
+            {Array.from({ length: 17 }, (_, i) => (
+              <div key={i} className="ruler-mark" style={{ width: PIXELS_PER_BEAT }}><span>{i + 1}</span></div>
+            ))}
+          </div>
+          <div className="track-lanes">
+            {/* Grid lines overlay */}
+            <div className="grid-lines" style={{ left: '170px' }}>
+              {Array.from({ length: 17 * gridDivision }, (_, i) => (
+                <div
+                  key={i}
+                  className={`grid-line ${i % gridDivision === 0 ? 'major' : 'minor'}`}
+                  style={{ left: `${(i / gridDivision) * PIXELS_PER_BEAT}px` }}
+                />
+              ))}
+            </div>
+            {tracks.map(track => (
+              <div
+                key={track.id}
+                className={`track-lane ${track.muted ? 'muted' : ''} ${selectedTrackId === track.id ? 'selected' : ''} ${tracks.some(t => t.soloed) && !track.soloed ? 'greyed' : ''} ${draggedTrackId === track.id ? 'dragging' : ''} ${dropTargetId === track.id ? 'drop-target' : ''}`}
+                onClick={() => handleSelectTrack(track.id)}
+                onDoubleClick={() => setEditingTrackId(track.id)}
+                onContextMenu={(e) => handleTrackContextMenu(e, track.id)}
+                draggable
+                onDragStart={(e) => handleDragStart(e, track.id)}
+                onDragOver={(e) => handleDragOver(e, track.id)}
+                onDragLeave={handleDragLeave}
+                onDrop={(e) => handleDrop(e, track.id)}
+                onDragEnd={handleDragEnd}
+              >
+                <div className="track-header">
+                  <div className="track-color" style={{ backgroundColor: track.color }}></div>
+                  <div className="track-info">
+                    <div className="track-row-1" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <span className="track-name" title={track.name}>{track.name}</span>
+                      <div className="track-controls">
+                        <button className={`track-btn ${track.muted ? 'active' : ''}`} onClick={e => { e.stopPropagation(); handleTrackMute(track.id); }}>M</button>
+                        <button className={`track-btn ${track.soloed ? 'active solo' : ''}`} onClick={e => { e.stopPropagation(); handleTrackSolo(track.id, e.shiftKey); }} title="Click to solo, Shift+click for multi-solo">S</button>
+                      </div>
+                    </div>
+                    <div className="track-row-2" style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
+                      {/* Real-time volume meter with level display */}
+                      <VolumeMeter
+                        trackId={track.id}
+                        volume={track.volume}
+                        onVolumeChange={(vol) => handleTrackVolumeChange(track.id, vol)}
+                        isPlaying={isPlaying}
+                        isMuted={track.muted}
+                      />
+                      {/* Pan knob */}
+                      <PanKnob
+                        value={track.pan}
+                        size={20}
+                        onChange={pan => setTracks(prev => prev.map(t => t.id === track.id ? { ...t, pan } : t))}
+                      />
+                    </div>
+                    {track.instrument && <span className="track-instrument">{track.instrument}</span>}
+                  </div>
+                </div>
+                <div className="track-content" style={{ minHeight: '80px' }}>
+                  {track.clips.map((clip, idx) => {
+                    const clipWidth = clip.duration * PIXELS_PER_BEAT;
+                    const clipHeight = 68; // Track lane min-height (80) - top/bottom padding (12)
+
+                    // Calculate note range for this clip
+                    const notes = clip.notes || [];
+                    const minPitch = notes.length > 0 ? Math.min(...notes.map(n => n.pitch)) : 60;
+                    const maxPitch = notes.length > 0 ? Math.max(...notes.map(n => n.pitch)) : 72;
+                    const pitchRange = Math.max(12, maxPitch - minPitch + 1);
+
+                    return (
+                      <div key={idx} className="clip" style={{
+                        left: `${clip.start * PIXELS_PER_BEAT}px`,
+                        width: `${clipWidth}px`,
+                        backgroundColor: track.color + '25',
+                        borderColor: track.color
+                      }}>
+                        <span className="clip-name">{clip.name}</span>
+
+                        {/* MIDI Note Visualization */}
+                        {(track.type === 'midi' || track.type === 'drums') && notes.length > 0 && (
+                          <svg className="clip-notes" viewBox="0 0 100 100" preserveAspectRatio="none">
+                            {notes.map((note, noteIdx) => {
+                              // Use normalized 0-100 coordinates - notes touch top and bottom
+                              const x = (note.start / clip.duration) * 100;
+                              const w = Math.max(1, (note.duration / clip.duration) * 100);
+                              const y = ((maxPitch - note.pitch) / pitchRange) * 100;
+                              const h = (1 / pitchRange) * 100; // Full height per note
+                              return (
+                                <rect
+                                  key={noteIdx}
+                                  x={x}
+                                  y={y}
+                                  width={w - 0.5}
+                                  height={h}
+                                  rx={0.5}
+                                  fill={track.color}
+                                  opacity={0.9}
+                                />
+                              );
+                            })}
+                          </svg>
+                        )}
+
+                        {/* Audio Waveform Visualization */}
+                        {track.type === 'audio' && (
+                          <svg className="clip-waveform" viewBox="0 0 100 100" preserveAspectRatio="none">
+                            {Array.from({ length: 50 }).map((_, i) => {
+                              // Generate pseudo-random but consistent waveform
+                              const seed = (clip.name.charCodeAt(i % clip.name.length) + i) % 100;
+                              const h = 20 + (seed / 100) * 60;
+                              const y = (100 - h) / 2;
+                              return (
+                                <rect
+                                  key={i}
+                                  x={i * 2}
+                                  y={y}
+                                  width={1.5}
+                                  height={h}
+                                  rx={0.5}
+                                  fill={track.color}
+                                  opacity={0.6}
+                                />
+                              );
+                            })}
+                          </svg>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            {/* Empty State / Add Track Area */}
+            <div
+              className="empty-track-area"
+              onClick={() => setShowAddTrackModal(true)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setShowAddTrackModal(true);
+              }}
+            >
+              <div className="empty-state-content">
+                <Plus size={24} />
+                <span>Add New Track</span>
+                <small>Click or drop samples here</small>
+              </div>
+            </div>
+
+            {/* Playhead - uses animated playbackBeat for smooth movement */}
+            {/* Playhead - uses animated playbackBeat for smooth movement */}
+            <div style={{ position: 'absolute', top: 0, bottom: 0, left: 171, zIndex: 10, pointerEvents: 'none' }}>
+              <MasterPlayhead pixelsPerBeat={PIXELS_PER_BEAT} height={900} scrollLeft={0} />
+            </div>
+          </div>
         </main>
 
         {/* Synth Editor Panel (sidebar) */}
@@ -1319,6 +1594,13 @@ export default function DAWPage() {
         }
         .color-swatch:hover { transform: scale(1.15); border-color: white; }
 
+        /* Drag states */
+        .track-lane.dragging { opacity: 0.5; background: rgba(88, 101, 242, 0.1); }
+        .track-lane.drop-target { 
+          border-top: 2px solid #5865f2; 
+          background: rgba(88, 101, 242, 0.08);
+        }
+
         /* Rename modal */
         .rename-modal { max-width: 320px; }
         .rename-input {
@@ -1430,8 +1712,125 @@ export default function DAWPage() {
           font-size: 0.7rem;
         }
 
+        /* Toolbar */
+        .toolbar {
+          height: 48px;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          padding: 0 1rem;
+          background: var(--bg-surface);
+          border-bottom: 1px solid var(--theme-border);
+        }
+        .toolbar-left { display: flex; align-items: center; gap: 1rem; }
+        .logo { display: flex; align-items: center; gap: 0.5rem; }
+        .logo-icon { color: #5865f2; }
+        .logo-text {
+          font-weight: 800;
+          font-size: 1.2rem;
+          background: linear-gradient(135deg, #5865f2, #eb459e);
+          -webkit-background-clip: text;
+          -webkit-text-fill-color: transparent;
+        }
+        .project-name { font-size: 0.8rem; color: #666; }
+        .history-controls { display: flex; gap: 2px; margin-left: 0.5rem; }
+        .history-btn {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          width: 28px;
+          height: 28px;
+          background: var(--border-subtle);
+          border: 1px solid var(--border-bright);
+          border-radius: 4px;
+          color: var(--text-dim);
+          cursor: pointer;
+          transition: all 0.15s;
+        }
+        .history-btn:hover:not(.disabled) { background: var(--border-bright); color: var(--text-bright); border-color: var(--accent-primary); }
+        .history-btn.disabled { opacity: 0.3; cursor: not-allowed; }
+        .grid-controls { margin-left: 0.25rem; }
+        .grid-select {
+          background: var(--border-subtle);
+          border: 1px solid var(--border-bright);
+          border-radius: 4px;
+          color: var(--text-dim);
+          padding: 4px 8px;
+          font-size: 0.7rem;
+          cursor: pointer;
+          outline: none;
+        }
+        .grid-select:hover { border-color: var(--accent-primary); color: var(--text-bright); }
+        .grid-select:focus { border-color: var(--accent-primary); }
+        .grid-lines {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          pointer-events: none;
+          z-index: 1;
+        }
+        .grid-line {
+          position: absolute;
+          top: 0;
+          bottom: 0;
+          width: 1px;
+        }
+        .grid-line.major { background: rgba(255, 255, 255, 0.08); }
+        .grid-line.minor { background: rgba(255, 255, 255, 0.03); }
+        .transport {
+          display: flex;
+          align-items: center;
+          gap: 0.25rem;
+          background: var(--bg-deep);
+          padding: 0.25rem 0.75rem;
+          border-radius: 6px;
+          border: 1px solid var(--border-subtle);
+        }
+        .transport-btn {
+          width: 30px;
+          height: 30px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: transparent;
+          border: none;
+          color: var(--text-dim);
+          border-radius: 4px;
+          cursor: pointer;
+        }
+        .transport-btn:hover { background: var(--border-subtle); color: var(--text-bright); }
+        .transport-btn.play { background: linear-gradient(135deg, #5865f2, #4752c4); color: white; }
+        .transport-btn.record:hover { color: #ff4d4d; }
+        .time-display, .tempo-display, .signature {
+          background: var(--bg-deep);
+          padding: 0.2rem 0.5rem;
+          border-radius: 3px;
+          margin-left: 0.5rem;
+          font-size: 0.75rem;
+        }
+        .time { color: #5865f2; font-family: monospace; }
+        .tempo-value { color: #eb459e; font-weight: 700; }
+        .tempo-label { color: #444; font-size: 0.5rem; margin-left: 2px; }
+        .signature { color: #444; }
+        .toolbar-right { display: flex; gap: 0.25rem; }
+        .action-btn {
+          width: 32px;
+          height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: transparent;
+          border: none;
+          color: var(--text-dim);
+          border-radius: 4px;
+          cursor: pointer;
+        }
+        .action-btn:hover { background: var(--border-subtle); color: var(--text-bright); }
+
         /* Main Content */
         .main-content { flex: 1; display: flex; overflow: hidden; }
+
+
 
         /* Browser */
         .sample-browser {
@@ -1503,6 +1902,312 @@ export default function DAWPage() {
           background: var(--bg-deep);
           overflow: hidden;
         }
+        .timeline-ruler {
+          height: 24px;
+          display: flex;
+          background: var(--bg-surface);
+          border-bottom: 1px solid var(--border-subtle);
+        }
+        .ruler-track-space { width: 170px; flex-shrink: 0; border-right: 1px solid var(--border-subtle); }
+        .ruler-mark {
+          display: flex;
+          align-items: center;
+          padding-left: 4px;
+          font-size: 0.5rem;
+          color: var(--text-dim);
+          border-left: 1px solid var(--border-subtle);
+        }
+        .track-lanes { 
+          flex: 1; 
+          overflow-y: auto; 
+          position: relative; 
+          display: flex;
+          flex-direction: column;
+        }
+        .empty-track-area {
+            flex: 1;
+            min-height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-top: 1px dashed #1a1a24;
+            margin-top: 2px;
+            cursor: pointer;
+            transition: all 0.2s;
+            opacity: 0.5;
+        }
+        .empty-track-area:hover {
+            background: rgba(88, 101, 242, 0.05);
+            opacity: 1;
+        }
+        .empty-state-content {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 8px;
+            color: #444;
+        }
+        .empty-track-area:hover .empty-state-content {
+            color: #5865f2;
+        }
+        .empty-state-content small {
+            font-size: 0.7rem;
+            color: #444;
+        }
+        .track-lane {
+          display: flex;
+          height: 80px;
+          flex-shrink: 0;
+          border-bottom: 1px solid #0c0c12;
+          cursor: pointer;
+          transition: background 0.15s;
+        }
+        .track-lane:hover { background: rgba(255, 255, 255, 0.02); }
+        .track-lane.selected { background: rgba(88, 101, 242, 0.08); }
+        .track-lane.muted { opacity: 0.4; }
+        .track-lane.greyed { opacity: 0.35; filter: saturate(0.3); }
+        .track-header {
+          width: 170px;
+          display: flex;
+          align-items: center;
+          gap: 0.4rem;
+          padding: 0 0.6rem;
+          background: var(--bg-surface);
+          border-right: 1px solid var(--border-subtle);
+          flex-shrink: 0;
+        }
+        .track-color { width: 3px; height: 32px; border-radius: 2px; }
+        .track-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; overflow: hidden; }
+        .track-name { display: block; font-size: 0.7rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .track-instrument { display: block; font-size: 0.5rem; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .track-controls { display: flex; gap: 0.2rem; }
+        .track-btn {
+          width: 18px;
+          height: 18px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: var(--border-subtle);
+          border: none;
+          color: var(--text-dim);
+          font-size: 0.5rem;
+          font-weight: 700;
+          border-radius: 3px;
+          cursor: pointer;
+        }
+        .track-btn:hover { color: white; }
+        .track-btn.active { background: #ff4d4d; color: white; }
+        .track-btn.active.solo { background: #fee75c; color: #000; }
+        .volume-meter-container {
+          position: relative;
+          width: 60px;
+          height: 10px;
+        }
+        .volume-meter-bg {
+          position: absolute;
+          top: 3px;
+          left: 0;
+          right: 0;
+          height: 4px;
+          background: var(--border-subtle);
+          border-radius: 2px;
+          overflow: hidden;
+        }
+        .volume-meter-fill {
+          height: 100%;
+          background: linear-gradient(90deg, #57f287, #fee75c, #ed4245);
+          opacity: 0.6;
+          transition: width 0.1s;
+        }
+        .mini-vol {
+          -webkit-appearance: none;
+          position: absolute;
+          top: 0;
+          left: 0;
+          width: 60px;
+          height: 10px;
+          background: transparent;
+          outline: none;
+          cursor: pointer;
+        }
+        .mini-vol::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          width: 6px;
+          height: 10px;
+          border-radius: 2px;
+          background: #fff;
+          cursor: pointer;
+          box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+        }
+        .mini-vol::-webkit-slider-thumb:hover { background: #5865f2; }
+        .track-content { flex: 1; position: relative; }
+        .clip {
+          position: absolute;
+          top: 6px;
+          bottom: 6px;
+          border-radius: 4px;
+          border-left: 3px solid;
+          cursor: pointer;
+        }
+        .clip:hover { filter: brightness(1.15); }
+        .clip-name { position: absolute; top: 3px; left: 6px; font-size: 0.5rem; color: rgba(255, 255, 255, 0.8); font-weight: 600; z-index: 1; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
+        .clip-notes, .clip-waveform { 
+          position: absolute; 
+          top: 14px; 
+          left: 3px; 
+          right: 3px; 
+          bottom: 3px; 
+          width: calc(100% - 6px);
+          height: calc(100% - 17px);
+          overflow: hidden;
+        }
+
+
+        /* Mixer */
+        .mixer {
+          height: 180px;
+          background: var(--bg-surface);
+          border-top: 1px solid var(--border-subtle);
+        }
+        .mixer-header {
+          padding: 0.3rem 1rem;
+          font-size: 0.55rem;
+          font-weight: 600;
+          text-transform: uppercase;
+          color: var(--text-dim);
+          letter-spacing: 1px;
+          border-bottom: 1px solid var(--border-subtle);
+        }
+        .mixer-channels {
+          display: flex;
+          gap: 2px;
+          padding: 0.5rem;
+          height: calc(100% - 24px);
+          overflow-x: auto;
+        }
+        .channel {
+          width: 56px;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          padding: 0.4rem;
+          background: var(--bg-deep);
+          border-radius: 4px;
+          border: 1px solid var(--border-subtle);
+          flex-shrink: 0;
+          cursor: pointer;
+        }
+        .channel:hover { border-color: #2a2a34; }
+        .channel.muted { opacity: 0.4; }
+        .channel.soloed { border-color: #fee75c; }
+        .channel.selected { border-color: #5865f2; background: rgba(88, 101, 242, 0.05); }
+        .channel.master {
+          width: 72px;
+          background: linear-gradient(180deg, rgba(88, 101, 242, 0.08) 0%, #0a0a10 100%);
+          border-color: rgba(88, 101, 242, 0.3);
+        }
+        .channel-label {
+          font-size: 0.5rem;
+          font-weight: 600;
+          margin-bottom: 0.3rem;
+          text-align: center;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          width: 100%;
+        }
+        .master-label { color: #5865f2 !important; }
+        .channel-main { display: flex; gap: 3px; flex: 1; width: 100%; }
+        .meter-container { display: flex; gap: 2px; }
+        .master-meters { gap: 3px; }
+        .meter {
+          width: 5px;
+          height: 100%;
+          background: var(--bg-deep);
+          border-radius: 2px;
+          position: relative;
+          overflow: hidden;
+        }
+        .master-meter { width: 8px; }
+        .meter-fill {
+          position: absolute;
+          bottom: 0;
+          width: 100%;
+          background: linear-gradient(to top, #57f287 0%, #57f287 55%, #fee75c 75%, #ff6b6b 90%, #ff4d4d 100%);
+          border-radius: 2px;
+        }
+        .master-fill { background: linear-gradient(to top, #5865f2 0%, #5865f2 55%, #eb459e 75%, #ff6b6b 90%, #ff4d4d 100%); }
+        .fader-container { flex: 1; display: flex; justify-content: center; }
+        .fader-track {
+          width: 6px;
+          height: 100%;
+          background: var(--border-subtle);
+          border-radius: 3px;
+          position: relative;
+        }
+        .master-fader-track { width: 10px; }
+        .fader-fill {
+          position: absolute;
+          bottom: 0;
+          width: 100%;
+          background: linear-gradient(to top, #3a3a4a 0%, #5a5a6a 100%);
+          border-radius: 3px;
+        }
+        .master-fader-fill { background: linear-gradient(to top, #4752c4 0%, #5865f2 100%); }
+        .fader {
+          position: absolute;
+          width: 100%;
+          height: 100%;
+          opacity: 0;
+          cursor: pointer;
+          -webkit-appearance: slider-vertical;
+          writing-mode: bt-lr;
+        }
+        .channel-controls {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          gap: 0.25rem;
+          margin-top: 0.25rem;
+        }
+        .pan-knob {
+          width: 18px;
+          height: 18px;
+          background: #1a1a24;
+          border-radius: 50%;
+          position: relative;
+          border: 1px solid #2a2a34;
+        }
+        .knob {
+          position: absolute;
+          top: 50%;
+          left: 50%;
+          width: 2px;
+          height: 7px;
+          background: #5865f2;
+          transform-origin: bottom center;
+          margin-left: -1px;
+          margin-top: -7px;
+          border-radius: 1px;
+        }
+        .channel-buttons { display: flex; gap: 0.15rem; }
+        .ch-btn {
+          width: 16px;
+          height: 14px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          background: #1a1a24;
+          border: none;
+          color: #444;
+          font-size: 0.45rem;
+          font-weight: 700;
+          border-radius: 2px;
+          cursor: pointer;
+        }
+        .ch-btn:hover { color: white; }
+        .ch-btn.m.active { background: #ff4d4d; color: white; }
+        .ch-btn.s.active { background: #fee75c; color: #000; }
       `}</style>
     </div>
   );

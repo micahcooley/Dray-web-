@@ -158,17 +158,6 @@ class AudioEngine {
     try { ch.panner.pan.rampTo(value / 100, 0.05); } catch (e) { ch.panner.pan.value = value / 100; }
   }
 
-  public setMasterVolume(value: number) {
-    if (!this._isInitialized || !this.Tone) return;
-    // value is 0-1 linear
-    const db = value <= 0.001 ? -Infinity : 20 * Math.log10(value);
-    try {
-        this.Tone.getDestination().volume.rampTo(db, 0.1);
-    } catch (e) {
-        console.error("Failed to set master volume", e);
-    }
-  }
-
   public getTrackLevels(): Record<number, number> {
     const out: Record<number, number> = {};
     if (!this.context || !this._isInitialized) return out;
