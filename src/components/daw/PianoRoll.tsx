@@ -95,17 +95,31 @@ function PianoRollBase({
             if (!audioEngine.isReady()) await audioEngine.initialize();
 
             if (trackType === 'drums') {
-                const sound = DRUM_MAP[pitch];
-                if (sound) await toneDrumMachine.playKick(-1, sound, 0.8);
+                // Fix: Set kit and play correct note instead of forcing Kick
+                const kit = instrument || '808';
+                toneDrumMachine.setKit(kit);
+                await toneDrumMachine.previewNote(-1, pitch, 0.8);
             } else {
                 const targetInstrument = instrument || 'Grand Piano';
                 const engineName = getEngineForInstrument(targetInstrument);
-                if (engineName === 'bass') {
-                    toneBassEngine.playNote(-1, pitch, '8n', 0.8, targetInstrument);
-                } else if (engineName === 'keys') {
-                    toneKeysEngine.playChord(-1, targetInstrument, [pitch], '8n', 0.8);
-                } else {
-                    toneSynthEngine.previewNote(-1, targetInstrument, pitch, 0.8);
+
+                // Unified preview logic using monophonic previewNote to prevent glitches
+                switch (engineName) {
+                    case 'bass':
+                        toneBassEngine.previewNote(-1, targetInstrument, pitch, 0.8);
+                        break;
+                    case 'keys':
+                        toneKeysEngine.previewNote(-1, targetInstrument, pitch, 0.8);
+                        break;
+                    case 'vocal':
+                        toneVocalEngine.previewNote(-1, targetInstrument, pitch, 0.8);
+                        break;
+                    case 'fx':
+                        toneFXEngine.previewNote(-1, targetInstrument, pitch, 0.8);
+                        break;
+                    default:
+                        toneSynthEngine.previewNote(-1, targetInstrument, pitch, 0.8);
+                        break;
                 }
             }
         };
