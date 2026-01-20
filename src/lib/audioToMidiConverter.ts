@@ -1,6 +1,7 @@
 'use client';
 
 import { audioEngine } from './audioEngine';
+import { FFT } from './fft';
 import type { MidiNote } from './types';
 
 /**
@@ -241,6 +242,7 @@ class AudioToMidiConverter {
 
     /**
      * Autocorrelation-based pitch detection (YIN-like)
+     * Optimized using FFT for difference function calculation
      */
     private detectPitchAutocorrelation(
         buffer: Float32Array,
@@ -250,25 +252,78 @@ class AudioToMidiConverter {
         const maxFreq = 1200; // ~D6
         const minPeriod = Math.floor(sampleRate / maxFreq);
         const maxPeriod = Math.floor(sampleRate / minFreq);
+        const W = buffer.length;
 
-        // Calculate normalized difference function
+        // FFT size must be power of 2 and cover window + max lag to avoid circular wrapping artifacts
+        const fftSize = FFT.ensurePowerOfTwo(W + maxPeriod);
+
+        // 1. Calculate Power Spectrum of the signal
+        const real = new Float32Array(fftSize);
+        const imag = new Float32Array(fftSize);
+
+        // Copy signal into real part
+        for (let i = 0; i < W; i++) {
+            real[i] = buffer[i];
+        }
+
+        FFT.fft(real, imag);
+
+        // 2. Compute Power Spectrum (Real^2 + Imag^2)
+        // Autocorrelation theorem: FFT(x) * conj(FFT(x)) -> Autocorrelation
+        for (let i = 0; i < fftSize; i++) {
+            const r = real[i];
+            const im = imag[i];
+            real[i] = r * r + im * im; // Magnitude squared
+            imag[i] = 0;
+        }
+
+        // 3. Inverse FFT to get Autocorrelation
+        FFT.ifft(real, imag);
+
+        // The autocorrelation is in the real part of the IFFT result.
+        // real[tau] = sum(x[j] * x[j + tau])
+        const autocorrelation = real;
+
+        // 4. Calculate Energy Terms for Difference Function
+        // d(tau) = sum(x[j]^2) + sum(x[j+tau]^2) - 2 * autocorrelation[tau]
+        // We use cumulative sum of squares for O(1) lookups
+        const xSquaredSum = new Float32Array(W + 1);
+        xSquaredSum[0] = 0;
+        for (let i = 0; i < W; i++) {
+            xSquaredSum[i + 1] = xSquaredSum[i] + buffer[i] * buffer[i];
+        }
+
+        // Calculate YIN difference function
         const yinBuffer = new Float32Array(maxPeriod);
 
         for (let tau = minPeriod; tau < maxPeriod; tau++) {
-            let sum = 0;
-            for (let j = 0; j < buffer.length - tau; j++) {
-                const diff = buffer[j] - buffer[j + tau];
-                sum += diff * diff;
-            }
-            yinBuffer[tau] = sum;
+            // Integration window shrinks as tau increases: j goes from 0 to W - 1 - tau
+            // Term 1: Sum of squares of x[j] (range 0 to W - 1 - tau)
+            // Term 2: Sum of squares of x[j+tau] (range tau to W - 1)
+            // But wait, the previous loop implementation was:
+            // for j = 0 to buffer.length - tau
+            //    diff = buffer[j] - buffer[j+tau]
+
+            const term1 = xSquaredSum[W - tau] - xSquaredSum[0]; // Sum x[0..W-tau-1]^2
+            const term2 = xSquaredSum[W] - xSquaredSum[tau];     // Sum x[tau..W-1]^2
+            const term3 = 2 * autocorrelation[tau];
+
+            yinBuffer[tau] = term1 + term2 - term3;
         }
 
-        // Cumulative mean normalized difference
+        // Cumulative mean normalized difference (CMND)
         yinBuffer[0] = 1;
         let runningSum = 0;
+        // Start from 1 because tau=0 is always 0 difference (or minimal)
+        // Adjust logic to match YIN paper: d'(tau) = d(tau) / [(1/tau) * sum(d(j) for j=1..tau)]
+
         for (let tau = 1; tau < maxPeriod; tau++) {
             runningSum += yinBuffer[tau];
-            yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+            if (runningSum < 1e-10) {
+                yinBuffer[tau] = 1;
+            } else {
+                yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+            }
         }
 
         // Find first minimum below threshold
@@ -288,11 +343,17 @@ class AudioToMidiConverter {
         if (bestPeriod < 0) return null;
 
         // Parabolic interpolation
-        const prev = yinBuffer[bestPeriod - 1];
-        const curr = yinBuffer[bestPeriod];
-        const next = yinBuffer[bestPeriod + 1];
-        const offset = (prev - next) / (2 * (prev - 2 * curr + next));
-        const refinedPeriod = bestPeriod + offset;
+        let refinedPeriod = bestPeriod;
+        if (bestPeriod > 0 && bestPeriod < yinBuffer.length - 1) {
+            const prev = yinBuffer[bestPeriod - 1];
+            const curr = yinBuffer[bestPeriod];
+            const next = yinBuffer[bestPeriod + 1];
+            const denom = 2 * (prev - 2 * curr + next);
+            if (Math.abs(denom) > 1e-10) {
+                 const offset = (prev - next) / denom;
+                 refinedPeriod = bestPeriod + offset;
+            }
+        }
 
         const frequency = sampleRate / refinedPeriod;
         const midiNote = Math.round(12 * Math.log2(frequency / 440) + 69);
@@ -320,21 +381,24 @@ class AudioToMidiConverter {
     }
 
     /**
-     * Simple FFT implementation using DFT (for demo - use Web Audio FFT in production)
+     * FFT implementation using optimized Cooley-Tukey algorithm
      */
     private computeFFT(buffer: Float32Array): Float32Array {
-        const N = buffer.length;
-        const result = new Float32Array(N / 2);
+        // Pad to power of two
+        const N = FFT.ensurePowerOfTwo(buffer.length);
+        const real = new Float32Array(N);
+        const imag = new Float32Array(N);
 
-        for (let k = 0; k < N / 2; k++) {
-            let real = 0;
-            let imag = 0;
-            for (let n = 0; n < N; n++) {
-                const angle = (2 * Math.PI * k * n) / N;
-                real += buffer[n] * Math.cos(angle);
-                imag -= buffer[n] * Math.sin(angle);
-            }
-            result[k] = Math.sqrt(real * real + imag * imag);
+        for (let i = 0; i < buffer.length; i++) {
+            real[i] = buffer[i];
+        }
+
+        FFT.fft(real, imag);
+
+        // Calculate magnitude for first half (N/2)
+        const result = new Float32Array(N / 2);
+        for (let i = 0; i < N / 2; i++) {
+            result[i] = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
         }
 
         return result;
