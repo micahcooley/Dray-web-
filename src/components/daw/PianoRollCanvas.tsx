@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useEffect, useState, useImperativeHandle, forwardRef, useCallback } from 'react';
-import { NOTE_HEIGHT } from '../../lib/constants';
+import { NOTE_HEIGHT, BLACK_KEY_INDICES } from '../../lib/constants';
 import type { MidiNote } from '../../lib/types';
 import { getPlaybackBeat } from '../../hooks/usePlaybackTime';
 
@@ -116,25 +116,31 @@ const PianoRollCanvas = forwardRef<PianoRollCanvasHandle, PianoRollCanvasProps>(
         const startIndex = Math.floor(startY / NOTE_HEIGHT);
         const endIndex = Math.min(visiblePitches.length - 1, Math.ceil(endY / NOTE_HEIGHT));
 
+        // Batch horizontal lines to minimize draw calls
+        ctx.strokeStyle = '#1e1e2d';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+
+        // Pre-set fill style for black keys
+        ctx.fillStyle = '#0a0a0e';
+
         for (let i = Math.max(0, startIndex); i <= endIndex; i++) {
             const pitch = visiblePitches[i];
             const y = i * NOTE_HEIGHT;
             const noteIndex = pitch % 12;
-            const isBlack = [1, 3, 6, 8, 10].includes(noteIndex);
+            const isBlack = (BLACK_KEY_INDICES as readonly number[]).includes(noteIndex);
 
             if (isBlack) {
-                ctx.fillStyle = '#0a0a0e';
                 ctx.fillRect(startX, y, vWidth, NOTE_HEIGHT);
             }
 
-            // Horizontal line
-            ctx.strokeStyle = '#1e1e2d';
-            ctx.lineWidth = 1;
-            ctx.beginPath();
+            // Add horizontal line to batch
             ctx.moveTo(startX, y + NOTE_HEIGHT);
             ctx.lineTo(endX, y + NOTE_HEIGHT);
-            ctx.stroke();
         }
+
+        // Draw all lines at once
+        ctx.stroke();
 
         // 3. Draw Vertical Grid Lines
         const beatWidth = pixelsPerBeat;
