@@ -27,6 +27,7 @@ import SynthEditorPanel from '../../components/daw/SynthEditorPanel';
 import { getProjectContext, parseWingmanResponse } from '../../lib/wingmanBridge';
 import { stemSeparator } from '../../lib/stemSeparator';
 import MasterPlayhead from '../../components/daw/MasterPlayhead';
+import { GridOverlay } from '../../components/daw/GridOverlay';
 import AudioConversionModal from '../../components/daw/AudioConversionModal';
 import { PatternGenerators } from '../../lib/patternGenerators';
 import type { Track, Clip, MidiNote, TrackType, AudioWaveform } from '../../lib/types';
@@ -1279,15 +1280,11 @@ export default function DAWPage() {
           </div>
           <div className="track-lanes">
             {/* Grid lines overlay */}
-            <div className="grid-lines" style={{ left: '170px' }}>
-              {Array.from({ length: 17 * gridDivision }, (_, i) => (
-                <div
-                  key={i}
-                  className={`grid-line ${i % gridDivision === 0 ? 'major' : 'minor'}`}
-                  style={{ left: `${(i / gridDivision) * PIXELS_PER_BEAT}px` }}
-                />
-              ))}
-            </div>
+            <GridOverlay
+              pixelsPerBeat={PIXELS_PER_BEAT}
+              gridDivision={gridDivision}
+              totalBeats={17}
+            />
             {tracks.map(track => (
               <div
                 key={track.id}
@@ -1762,21 +1759,6 @@ export default function DAWPage() {
         }
         .grid-select:hover { border-color: var(--accent-primary); color: var(--text-bright); }
         .grid-select:focus { border-color: var(--accent-primary); }
-        .grid-lines {
-          position: absolute;
-          top: 0;
-          bottom: 0;
-          pointer-events: none;
-          z-index: 1;
-        }
-        .grid-line {
-          position: absolute;
-          top: 0;
-          bottom: 0;
-          width: 1px;
-        }
-        .grid-line.major { background: rgba(255, 255, 255, 0.08); }
-        .grid-line.minor { background: rgba(255, 255, 255, 0.03); }
         .transport {
           display: flex;
           align-items: center;
