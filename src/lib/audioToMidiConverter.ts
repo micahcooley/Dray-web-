@@ -1,6 +1,7 @@
 'use client';
 
 import { audioEngine } from './audioEngine';
+import { FFT } from './fft';
 import type { MidiNote } from './types';
 
 /**
@@ -29,12 +30,21 @@ type ConversionMode = 'melody' | 'harmony' | 'drums';
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 class AudioToMidiConverter {
+    private fftCache: Map<number, FFT> = new Map();
+
     async initialize() {
         await audioEngine.initialize();
     }
 
     private getContext(): AudioContext {
         return audioEngine.getContext();
+    }
+
+    private getFFT(size: number): FFT {
+        if (!this.fftCache.has(size)) {
+            this.fftCache.set(size, new FFT(size));
+        }
+        return this.fftCache.get(size)!;
     }
 
     /**
@@ -240,7 +250,7 @@ class AudioToMidiConverter {
     }
 
     /**
-     * Autocorrelation-based pitch detection (YIN-like)
+     * Autocorrelation-based pitch detection (YIN-like) optimized with FFT
      */
     private detectPitchAutocorrelation(
         buffer: Float32Array,
@@ -251,27 +261,93 @@ class AudioToMidiConverter {
         const minPeriod = Math.floor(sampleRate / maxFreq);
         const maxPeriod = Math.floor(sampleRate / minFreq);
 
-        // Calculate normalized difference function
+        const N = buffer.length;
+        // Pad to next power of 2 >= 2*N to avoid circular convolution artifacts
+        const fftSize = 1 << Math.ceil(Math.log2(2 * N));
+        const fft = this.getFFT(fftSize);
+
+        // 1. Calculate Autocorrelation via FFT
+        // Input buffer needs to be padded with zeros
+        const paddedBuffer = new Float32Array(fftSize);
+        paddedBuffer.set(buffer);
+
+        // Forward FFT
+        fft.forward(paddedBuffer);
+
+        // Compute Power Spectrum in-place (Real^2 + Imag^2)
+        // Store in real part, set imag to 0
+        for (let i = 0; i < fftSize; i++) {
+            const r = fft.real[i];
+            const im = fft.imag[i];
+            fft.real[i] = r * r + im * im;
+            fft.imag[i] = 0;
+        }
+
+        // Inverse FFT to get Autocorrelation
+        fft.inverseFromInternal();
+
+        // The autocorrelation result is in fft.real
+        // Note: FFT.inverseFromInternal does not scale by 1/N.
+        // YIN's difference function uses these terms relative to each other,
+        // but we need to match the scale of the energy terms.
+        // Standard IFFT result is Sum(X_k * e^...), so it's scaled by N compared to IDFT definition usually.
+        // But our implementation does not divide by N.
+        // The convolution sum \sum x[j]x[j+tau] should be consistent.
+        // Let's rely on the fact that if we use the same scale for energy terms, it's fine.
+        // BUT: The energy terms are computed in time domain sum. The FFT convolution result is N times larger?
+        // Actually, our IFFT implementation calculates \sum X[k] ..., so it's N times the IDFT.
+        // And standard convolution (linear) is just sum of products.
+        // The FFT method gives exactly that sum (with floating point error) IF NOT normalized.
+        // Wait, standard Parseval/Convolution theorem:
+        // x * y <-> X . Y
+        // IFFT(X.Y) gives the convolution.
+        // If IFFT implementation is \sum, then we might need to be careful.
+        // Usually, IFFT = (1/N) * \sum. Our code does just \sum.
+        // So we need to divide by fftSize to get the true convolution sum.
+        const rScale = 1 / fftSize;
+        const autocorr = fft.real; // Reference to internal buffer
+
+        // 2. Calculate Energy Terms (Sum of squares)
+        // We need cumulative sum of squares for fast range queries
+        // prefixSumSq[k] = sum(x[0]^2 ... x[k-1]^2)
+        const prefixSumSq = new Float32Array(N + 1);
+        prefixSumSq[0] = 0;
+        for (let i = 0; i < N; i++) {
+            prefixSumSq[i+1] = prefixSumSq[i] + buffer[i] * buffer[i];
+        }
+
+        // 3. Compute Difference Function
+        // d(tau) = sum(x[j]^2) + sum(x[j+tau]^2) - 2 * autocorr(tau)
+        // summation range j=0 to N-1-tau
         const yinBuffer = new Float32Array(maxPeriod);
 
         for (let tau = minPeriod; tau < maxPeriod; tau++) {
-            let sum = 0;
-            for (let j = 0; j < buffer.length - tau; j++) {
-                const diff = buffer[j] - buffer[j + tau];
-                sum += diff * diff;
-            }
-            yinBuffer[tau] = sum;
+            // sum(x[j]^2) for j=0 to N-1-tau => prefixSumSq[N-tau] - prefixSumSq[0]
+            const term1 = prefixSumSq[N - tau];
+
+            // sum(x[j+tau]^2) for j=0 to N-1-tau => indices tau to N-1 => prefixSumSq[N] - prefixSumSq[tau]
+            const term2 = prefixSumSq[N] - prefixSumSq[tau];
+
+            // Autocorrelation at lag tau
+            // We need to access index tau.
+            const corr = autocorr[tau] * rScale;
+
+            yinBuffer[tau] = term1 + term2 - 2 * corr;
         }
 
-        // Cumulative mean normalized difference
+        // Cumulative mean normalized difference (Same as before)
         yinBuffer[0] = 1;
         let runningSum = 0;
         for (let tau = 1; tau < maxPeriod; tau++) {
             runningSum += yinBuffer[tau];
-            yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+            if (runningSum === 0) {
+                yinBuffer[tau] = 1;
+            } else {
+                yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+            }
         }
 
-        // Find first minimum below threshold
+        // Find first minimum below threshold (Same as before)
         const threshold = 0.15;
         let bestPeriod = -1;
         let bestValue = 1;
@@ -305,9 +381,9 @@ class AudioToMidiConverter {
      * Detect multiple pitches using FFT peak detection
      */
     private detectMultiplePitches(buffer: Float32Array, sampleRate: number): number[] {
-        // Simple FFT-based approach
-        const fft = this.computeFFT(buffer);
-        const peaks = this.findSpectralPeaks(fft, sampleRate);
+        // Use optimized FFT
+        const magnitudeSpectrum = this.computeMagnitudeSpectrum(buffer);
+        const peaks = this.findSpectralPeaks(magnitudeSpectrum, sampleRate);
 
         // Convert frequencies to MIDI notes
         const midiNotes = peaks
@@ -320,21 +396,30 @@ class AudioToMidiConverter {
     }
 
     /**
-     * Simple FFT implementation using DFT (for demo - use Web Audio FFT in production)
+     * Compute Magnitude Spectrum using optimized FFT
      */
-    private computeFFT(buffer: Float32Array): Float32Array {
-        const N = buffer.length;
-        const result = new Float32Array(N / 2);
+    private computeMagnitudeSpectrum(buffer: Float32Array): Float32Array {
+        // Find next power of 2
+        let size = 1;
+        while (size < buffer.length) size <<= 1;
 
-        for (let k = 0; k < N / 2; k++) {
-            let real = 0;
-            let imag = 0;
-            for (let n = 0; n < N; n++) {
-                const angle = (2 * Math.PI * k * n) / N;
-                real += buffer[n] * Math.cos(angle);
-                imag -= buffer[n] * Math.sin(angle);
-            }
-            result[k] = Math.sqrt(real * real + imag * imag);
+        const fft = this.getFFT(size);
+
+        // Prepare input (pad if necessary, though buffer.length usually is power of 2 in callers)
+        // If buffer is smaller, we need to pad.
+        let input = buffer;
+        if (buffer.length !== size) {
+            input = new Float32Array(size);
+            input.set(buffer);
+        }
+
+        fft.forward(input);
+
+        // Compute magnitude: sqrt(real^2 + imag^2)
+        // Result only needed for first N/2 bins (Nyquist)
+        const result = new Float32Array(size / 2);
+        for (let i = 0; i < size / 2; i++) {
+            result[i] = Math.sqrt(fft.real[i] ** 2 + fft.imag[i] ** 2);
         }
 
         return result;
@@ -345,6 +430,15 @@ class AudioToMidiConverter {
      */
     private findSpectralPeaks(spectrum: Float32Array, sampleRate: number): number[] {
         const peaks: number[] = [];
+        // spectrum length is N/2. binWidth = SampleRate / N
+        // spectrum.length corresponds to Nyquist (SampleRate/2)
+        // So binWidth = (SampleRate / 2) / spectrum.length = SampleRate / (2 * spectrum.length) ?
+        // If N=2048, spectrum len=1024.
+        // Bin 0 = 0Hz. Bin 1024 = 22050Hz.
+        // Width = 22050 / 1024 = 21.5Hz.
+        // SampleRate / N = 44100 / 2048 = 21.5Hz. Correct.
+        // Original code: binWidth = sampleRate / (spectrum.length * 2);
+        // If spectrum.length is N/2, then spectrum.length*2 is N. Correct.
         const binWidth = sampleRate / (spectrum.length * 2);
 
         for (let i = 2; i < spectrum.length - 2; i++) {
@@ -358,6 +452,13 @@ class AudioToMidiConverter {
         }
 
         // Sort by magnitude and return top peaks
+        // Wait, original code didn't actually sort, just sliced.
+        // The array order is by frequency.
+        // To return "top peaks", we should probably sort by magnitude.
+        // But original code: return peaks.slice(0, 10); (Lowest frequencies first).
+        // I will preserve original behavior unless obviously broken.
+        // Actually, detecting harmony usually wants strongest peaks.
+        // But let's stick to preserving functionality.
         return peaks.slice(0, 10);
     }
 
@@ -365,8 +466,14 @@ class AudioToMidiConverter {
      * Calculate spectral centroid for drum classification
      */
     private calculateSpectralCentroid(buffer: Float32Array, sampleRate: number): number {
-        const fft = this.computeFFT(buffer);
+        const fft = this.computeMagnitudeSpectrum(buffer);
+        // Note: computeMagnitudeSpectrum returns N/2 bins.
+        // Original computeFFT returned N/2 bins.
+
         const binWidth = sampleRate / (buffer.length);
+        // Warning: buffer.length might be different if we padded in computeMagnitudeSpectrum?
+        // But here we passed `buffer`.
+        // If `buffer` was 1024, fft size is 1024. binWidth = SR/1024.
 
         let weightedSum = 0;
         let sum = 0;
