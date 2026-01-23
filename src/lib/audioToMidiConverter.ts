@@ -32,6 +32,8 @@ type ConversionMode = 'melody' | 'harmony' | 'drums';
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
+let requestIdCounter = 0;
+
 class AudioToMidiConverter {
     async initialize() {
         await audioEngine.initialize();
@@ -69,7 +71,7 @@ class AudioToMidiConverter {
 
         return new Promise((resolve, reject) => {
             const worker = new Worker(new URL('./worker/audioToMidi.worker.ts', import.meta.url));
-            const requestId = Date.now();
+            const requestId = ++requestIdCounter;
 
             worker.onmessage = (e) => {
                 const { id, type, data, error } = e.data;
