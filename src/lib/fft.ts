@@ -33,7 +33,6 @@ export class FFT {
 
     private initializeTables() {
         // Precompute bit reversal table
-        const limit = 1;
         let bit = this.size >> 1;
         let i = 0;
         let j = 0;

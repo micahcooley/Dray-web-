@@ -296,7 +296,8 @@ function detectMultiplePitches(buffer: Float32Array, sampleRate: number, fft: FF
 
 function findSpectralPeaks(spectrum: Float32Array, sampleRate: number, bufferSize: number): number[] {
     const peaks: number[] = [];
-    const binWidth = sampleRate / bufferSize; // N, not N/2, because FFT size is N
+    // bufferSize is the original FFT size (N), spectrum has N/2 bins
+    const binWidth = sampleRate / bufferSize;
 
     for (let i = 2; i < spectrum.length - 2; i++) {
         if (spectrum[i] > spectrum[i - 1] &&
@@ -313,6 +314,7 @@ function findSpectralPeaks(spectrum: Float32Array, sampleRate: number, bufferSiz
 
 function calculateSpectralCentroid(buffer: Float32Array, sampleRate: number, fft: FFT): number {
     const spectrum = fft.forward(buffer);
+    // buffer.length is the FFT size (N), spectrum has N/2 bins
     const binWidth = sampleRate / buffer.length;
 
     let weightedSum = 0;

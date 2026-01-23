@@ -100,7 +100,11 @@ class AudioToMidiConverter {
             };
 
             worker.onerror = (e) => {
-                worker.terminate();
+                try {
+                    worker.terminate();
+                } catch (err) {
+                    // Worker may already be terminated
+                }
                 reject(e);
             };
 
