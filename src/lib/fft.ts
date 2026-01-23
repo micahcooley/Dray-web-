@@ -43,8 +43,7 @@ export class FFT {
         }
 
         // Precompute bit reversal table
-        const limit = 1;
-        let bit = this.size >> 1;
+        const bit = this.size >> 1;
         let i = 0;
         let j = 0;
 
@@ -113,9 +112,6 @@ export class FFT {
         // Butterfly operations
         let halfSize = 1;
         while (halfSize < this.size) {
-            const phaseShiftStepReal = this.cosTable[this.size / 2 / halfSize]; // Not used directly due to full table
-            const phaseShiftStepImag = this.sinTable[this.size / 2 / halfSize]; // Not used directly
-
             // We can iterate through the precomputed table with a stride
             const tableStride = (this.size / 2) / halfSize;
 
