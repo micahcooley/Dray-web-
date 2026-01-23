@@ -131,7 +131,7 @@ const PianoRollCanvas = forwardRef<PianoRollCanvasHandle, PianoRollCanvasProps>(
             const isBlack = (BLACK_KEY_INDICES as readonly number[]).includes(noteIndex);
 
             if (isBlack) {
-                ctx.fillRect(startX, y, vWidth, NOTE_HEIGHT);
+                ctx.fillRect(startX, y, endX - startX, NOTE_HEIGHT);
             }
 
             // Add horizontal line to batch
