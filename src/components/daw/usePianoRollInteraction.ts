@@ -230,8 +230,10 @@ export function usePianoRollInteraction({
                 const newDuration = Math.max(gridSize, snap(original.duration + deltaX));
                 return { ...note, duration: newDuration };
             } else if (dragMode === 'resize-left') {
-                const newStart = Math.max(0, snap(original.start + deltaX));
-                const newDuration = Math.max(gridSize, original.duration + (original.start - newStart));
+                const originalEnd = original.start + original.duration;
+                const newStartUnclamped = snap(original.start + deltaX);
+                const newStart = Math.max(0, Math.min(newStartUnclamped, originalEnd - gridSize));
+                const newDuration = originalEnd - newStart;
                 return { ...note, start: newStart, duration: newDuration };
             }
             return note;
