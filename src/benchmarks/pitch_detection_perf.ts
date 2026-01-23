@@ -12,7 +12,8 @@ function detectPitchAutocorrelationBaseline(
     const minPeriod = Math.floor(sampleRate / maxFreq);
     const maxPeriod = Math.floor(sampleRate / minFreq);
 
-    const yinBuffer = new Float32Array(maxPeriod);
+    // Allocate extra space to avoid out-of-bounds access
+    const yinBuffer = new Float32Array(maxPeriod + 1);
 
     for (let tau = minPeriod; tau < maxPeriod; tau++) {
         let sum = 0;
@@ -28,7 +29,11 @@ function detectPitchAutocorrelationBaseline(
     let runningSum = 0;
     for (let tau = 1; tau < maxPeriod; tau++) {
         runningSum += yinBuffer[tau];
-        yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+        if (runningSum > 0) {
+            yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+        } else {
+            yinBuffer[tau] = 1;
+        }
     }
 
     const threshold = 0.15;
@@ -49,7 +54,8 @@ function detectPitchAutocorrelationBaseline(
     const prev = yinBuffer[bestPeriod - 1];
     const curr = yinBuffer[bestPeriod];
     const next = yinBuffer[bestPeriod + 1];
-    const offset = (prev - next) / (2 * (prev - 2 * curr + next));
+    const denominator = 2 * (prev - 2 * curr + next);
+    const offset = Math.abs(denominator) > 1e-10 ? (prev - next) / denominator : 0;
     const refinedPeriod = bestPeriod + offset;
 
     const frequency = sampleRate / refinedPeriod;
@@ -105,7 +111,8 @@ function detectPitchOptimized(
     fft.inverse(realBuffer, imagBuffer);
 
     // 3. Compute Difference Function
-    const yinBuffer = new Float32Array(maxPeriod); // This is small allocation, acceptable
+    // Allocate extra space to avoid out-of-bounds access
+    const yinBuffer = new Float32Array(maxPeriod + 1);
 
     for (let tau = minPeriod; tau < maxPeriod; tau++) {
         // d(tau) = sum(x[j]^2) + sum(x[j+tau]^2) - 2 * autocorr[tau]
@@ -124,7 +131,11 @@ function detectPitchOptimized(
     let runningSum = 0;
     for (let tau = 1; tau < maxPeriod; tau++) {
         runningSum += yinBuffer[tau];
-        yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+        if (runningSum > 0) {
+            yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+        } else {
+            yinBuffer[tau] = 1;
+        }
     }
 
     const threshold = 0.15;
@@ -145,7 +156,8 @@ function detectPitchOptimized(
     const prev = yinBuffer[bestPeriod - 1];
     const curr = yinBuffer[bestPeriod];
     const next = yinBuffer[bestPeriod + 1];
-    const offset = (prev - next) / (2 * (prev - 2 * curr + next));
+    const denominator = 2 * (prev - 2 * curr + next);
+    const offset = Math.abs(denominator) > 1e-10 ? (prev - next) / denominator : 0;
     const refinedPeriod = bestPeriod + offset;
 
     const frequency = sampleRate / refinedPeriod;
