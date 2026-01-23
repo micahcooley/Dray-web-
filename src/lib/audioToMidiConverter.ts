@@ -2,6 +2,7 @@
 
 import { audioEngine } from './audioEngine';
 import type { MidiNote } from './types';
+import { FFT } from './fft';
 
 /**
  * Audio to MIDI Converter Service
@@ -29,6 +30,17 @@ type ConversionMode = 'melody' | 'harmony' | 'drums';
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 class AudioToMidiConverter {
+    private fftCache = new Map<number, FFT>();
+
+    private getFFT(size: number): FFT {
+        let fft = this.fftCache.get(size);
+        if (!fft) {
+            fft = new FFT(size);
+            this.fftCache.set(size, fft);
+        }
+        return fft;
+    }
+
     async initialize() {
         await audioEngine.initialize();
     }
@@ -241,6 +253,7 @@ class AudioToMidiConverter {
 
     /**
      * Autocorrelation-based pitch detection (YIN-like)
+     * OPTIMIZED: Uses FFT for autocorrelation O(N log N)
      */
     private detectPitchAutocorrelation(
         buffer: Float32Array,
@@ -251,16 +264,49 @@ class AudioToMidiConverter {
         const minPeriod = Math.floor(sampleRate / maxFreq);
         const maxPeriod = Math.floor(sampleRate / minFreq);
 
-        // Calculate normalized difference function
+        const W = buffer.length;
+        // Calculate FFT size (next power of 2 >= W + maxPeriod)
+        // Note: W=2048, maxPeriod=735. W+maxPeriod = 2783. Next pow2 = 4096.
+        let N = 1;
+        while (N < W + maxPeriod) N *= 2;
+
+        const fft = this.getFFT(N);
+
+        // Allocate buffers (reusing would be better but this is much faster than O(N^2) already)
+        const real = new Float32Array(N);
+        const imag = new Float32Array(N);
+
+        // Copy input
+        real.set(buffer);
+
+        // Forward FFT
+        fft.process(real, imag, real, imag);
+
+        // Compute Power Spectrum (Re^2 + Im^2)
+        for (let i = 0; i < N; i++) {
+            real[i] = real[i] * real[i] + imag[i] * imag[i];
+            imag[i] = 0;
+        }
+
+        // Inverse FFT -> Autocorrelation
+        fft.process(real, imag, real, imag, true);
+
+        // Compute Difference Function
         const yinBuffer = new Float32Array(maxPeriod);
 
+        // Energy terms using prefix sums
+        const prefixSq = new Float32Array(W + 1);
+        prefixSq[0] = 0;
+        for(let i=0; i<W; i++) {
+            prefixSq[i+1] = prefixSq[i] + buffer[i]*buffer[i];
+        }
+
         for (let tau = minPeriod; tau < maxPeriod; tau++) {
-            let sum = 0;
-            for (let j = 0; j < buffer.length - tau; j++) {
-                const diff = buffer[j] - buffer[j + tau];
-                sum += diff * diff;
-            }
-            yinBuffer[tau] = sum;
+            const term1 = prefixSq[W - tau];
+            const term2 = prefixSq[W] - prefixSq[tau];
+            const term3 = real[tau]; // r(tau)
+
+            yinBuffer[tau] = term1 + term2 - 2 * term3;
         }
 
         // Cumulative mean normalized difference
@@ -282,6 +328,8 @@ class AudioToMidiConverter {
                     bestValue = yinBuffer[tau];
                     bestPeriod = tau;
                 }
+                // Stop at first significant dip to avoid octave errors
+                break;
             }
         }
 
@@ -320,23 +368,25 @@ class AudioToMidiConverter {
     }
 
     /**
-     * Simple FFT implementation using DFT (for demo - use Web Audio FFT in production)
+     * Optimized FFT using pre-computed tables
      */
     private computeFFT(buffer: Float32Array): Float32Array {
-        const N = buffer.length;
+        let N = 1;
+        while (N < buffer.length) N *= 2;
+
+        // If input is not power of 2, we zero-pad implicitly (by using larger N and copying)
+        const fft = this.getFFT(N);
+        const real = new Float32Array(N);
+        const imag = new Float32Array(N);
+
+        real.set(buffer);
+
+        fft.process(real, imag, real, imag);
+
         const result = new Float32Array(N / 2);
-
         for (let k = 0; k < N / 2; k++) {
-            let real = 0;
-            let imag = 0;
-            for (let n = 0; n < N; n++) {
-                const angle = (2 * Math.PI * k * n) / N;
-                real += buffer[n] * Math.cos(angle);
-                imag -= buffer[n] * Math.sin(angle);
-            }
-            result[k] = Math.sqrt(real * real + imag * imag);
+            result[k] = Math.sqrt(real[k] * real[k] + imag[k] * imag[k]);
         }
-
         return result;
     }
 
