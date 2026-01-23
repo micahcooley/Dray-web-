@@ -1279,15 +1279,16 @@ export default function DAWPage() {
           </div>
           <div className="track-lanes">
             {/* Grid lines overlay */}
-            <div className="grid-lines" style={{ left: '170px' }}>
-              {Array.from({ length: 17 * gridDivision }, (_, i) => (
-                <div
-                  key={i}
-                  className={`grid-line ${i % gridDivision === 0 ? 'major' : 'minor'}`}
-                  style={{ left: `${(i / gridDivision) * PIXELS_PER_BEAT}px` }}
-                />
-              ))}
-            </div>
+            <div
+              className="grid-lines"
+              style={{
+                left: '170px',
+                width: `${17 * PIXELS_PER_BEAT}px`,
+                backgroundImage: `linear-gradient(to right, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+                  linear-gradient(to right, rgba(255, 255, 255, 0.03) 1px, transparent 1px)`,
+                backgroundSize: `${PIXELS_PER_BEAT}px 100%, ${PIXELS_PER_BEAT / gridDivision}px 100%`,
+              }}
+            />
             {tracks.map(track => (
               <div
                 key={track.id}
@@ -1769,14 +1770,6 @@ export default function DAWPage() {
           pointer-events: none;
           z-index: 1;
         }
-        .grid-line {
-          position: absolute;
-          top: 0;
-          bottom: 0;
-          width: 1px;
-        }
-        .grid-line.major { background: rgba(255, 255, 255, 0.08); }
-        .grid-line.minor { background: rgba(255, 255, 255, 0.03); }
         .transport {
           display: flex;
           align-items: center;
