@@ -15,7 +15,7 @@ function detectPitchAutocorrelationBaseline(
     // Allocate extra space to avoid out-of-bounds access
     const yinBuffer = new Float32Array(maxPeriod + 1);
 
-    for (let tau = minPeriod; tau <= maxPeriod; tau++) {
+    for (let tau = minPeriod; tau < maxPeriod; tau++) {
         let sum = 0;
         for (let j = 0; j < buffer.length - tau; j++) {
             const diff = buffer[j] - buffer[j + tau];
@@ -27,7 +27,7 @@ function detectPitchAutocorrelationBaseline(
     // Post-processing
     yinBuffer[0] = 1;
     let runningSum = 0;
-    for (let tau = 1; tau <= maxPeriod; tau++) {
+    for (let tau = 1; tau < maxPeriod; tau++) {
         runningSum += yinBuffer[tau];
         if (runningSum > 0) {
             yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
@@ -114,7 +114,7 @@ function detectPitchOptimized(
     // Allocate extra space to avoid out-of-bounds access
     const yinBuffer = new Float32Array(maxPeriod + 1);
 
-    for (let tau = minPeriod; tau <= maxPeriod; tau++) {
+    for (let tau = minPeriod; tau < maxPeriod; tau++) {
         // d(tau) = sum(x[j]^2) + sum(x[j+tau]^2) - 2 * autocorr[tau]
         // Term 1: P[N-tau]
         const term1 = powerTerms[n - tau];
@@ -129,7 +129,7 @@ function detectPitchOptimized(
     // Post-processing (Same as baseline)
     yinBuffer[0] = 1;
     let runningSum = 0;
-    for (let tau = 1; tau <= maxPeriod; tau++) {
+    for (let tau = 1; tau < maxPeriod; tau++) {
         runningSum += yinBuffer[tau];
         if (runningSum > 0) {
             yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;

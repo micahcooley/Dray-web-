@@ -328,7 +328,7 @@ class AudioToMidiConverter {
         // Allocate extra space to avoid out-of-bounds access during minimum finding
         const yinBuffer = new Float32Array(maxPeriod + 1);
 
-        for (let tau = minPeriod; tau <= maxPeriod; tau++) {
+        for (let tau = minPeriod; tau < maxPeriod; tau++) {
             // Term 1: P[N-tau]
             const term1 = pTerms[n - tau];
             // Term 2: P[N] - P[tau]
@@ -342,7 +342,7 @@ class AudioToMidiConverter {
         // Cumulative mean normalized difference
         yinBuffer[0] = 1;
         let runningSum = 0;
-        for (let tau = 1; tau <= maxPeriod; tau++) {
+        for (let tau = 1; tau < maxPeriod; tau++) {
             runningSum += yinBuffer[tau];
             // Guard against division by zero
             if (runningSum > 0) {
