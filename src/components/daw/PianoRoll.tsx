@@ -40,7 +40,7 @@ const getNoteName = (pitch: number) => {
 };
 
 const isBlackKey = (pitch: number) => {
-    return BLACK_KEY_INDICES.includes((pitch % 12) as any);
+    return BLACK_KEY_INDICES.includes((pitch % 12) as typeof BLACK_KEY_INDICES[number]);
 };
 
 interface PianoRollProps {
@@ -146,7 +146,6 @@ function PianoRollBase({
     // Destructure for readability
     const {
         selectedNotes,
-        dragMode,
         selectionBox,
         handleCanvasMouseDown,
         handleGridMouseMove,
@@ -236,6 +235,7 @@ function PianoRollBase({
             const targetInstrument = instrument || 'Grand Piano';
             if (trackType !== 'drums') {
                 const engineName = getEngineForInstrument(targetInstrument);
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 let engine: any;
                 switch (engineName) {
                     case 'bass': engine = toneBassEngine; break;
