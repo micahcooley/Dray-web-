@@ -2,6 +2,7 @@
 
 import { audioEngine } from './audioEngine';
 import type { MidiNote } from './types';
+import type { WorkerRequest, WorkerResponse } from './worker/audioToMidi.worker';
 
 /**
  * Audio to MIDI Converter Service
@@ -9,8 +10,12 @@ import type { MidiNote } from './types';
  * 
  * Supports three conversion modes (like Ableton):
  * - Melody: Monophonic pitch detection for single-note melodies
- * - Harmony: Polyphonic detection for chords (simplified)
+ * - Harmony: Polyphonic detection for chords
  * - Drums: Transient detection for percussive content
+ *
+ * PERFORMANCE NOTE:
+ * Computation is offloaded to a Web Worker to prevent blocking the main thread.
+ * Spectral analysis uses an optimized Radix-2 FFT (O(N log N)).
  */
 
 interface ConversionProgress {
@@ -25,8 +30,6 @@ interface ConversionResult {
 }
 
 type ConversionMode = 'melody' | 'harmony' | 'drums';
-
-const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 class AudioToMidiConverter {
     async initialize() {
@@ -57,446 +60,71 @@ class AudioToMidiConverter {
             audioBuffer = await this.getContext().decodeAudioData(arrayBuffer);
         }
 
-        onProgress?.({ stage: 'Analyzing...', progress: 20 });
+        const channelData = audioBuffer.getChannelData(0);
+        const sampleRate = audioBuffer.sampleRate;
 
-        switch (mode) {
-            case 'melody':
-                return await this.convertMelody(audioBuffer, onProgress);
-            case 'harmony':
-                return await this.convertHarmony(audioBuffer, onProgress);
-            case 'drums':
-                return await this.convertDrums(audioBuffer, onProgress);
-            default:
-                return await this.convertMelody(audioBuffer, onProgress);
-        }
+        onProgress?.({ stage: 'Starting analysis worker...', progress: 10 });
+
+        return this.runInWorker(channelData, sampleRate, mode, onProgress);
     }
 
     /**
-     * Monophonic melody extraction using autocorrelation
+     * Offload processing to Web Worker
      */
-    private async convertMelody(
-        buffer: AudioBuffer,
+    private runInWorker(
+        channelData: Float32Array,
+        sampleRate: number,
+        mode: ConversionMode,
         onProgress?: (progress: ConversionProgress) => void
     ): Promise<ConversionResult> {
-        const sampleRate = buffer.sampleRate;
-        const channelData = buffer.getChannelData(0);
+        return new Promise((resolve, reject) => {
+            const worker = new Worker(new URL('./worker/audioToMidi.worker.ts', import.meta.url));
+            const id = Math.floor(Math.random() * 1000000);
 
-        // Analysis parameters
-        const frameSize = 2048; // ~46ms at 44100Hz
-        const hopSize = 512;    // 11.6ms - gives good time resolution
-        const totalFrames = Math.floor((channelData.length - frameSize) / hopSize);
+            worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+                const { type, data, progress, error, id: responseId } = event.data;
+                if (responseId !== id) return;
 
-        const pitchResults: Array<{ time: number; pitch: number; confidence: number }> = [];
-
-        for (let i = 0; i < totalFrames; i++) {
-            if (i % 50 === 0) {
-                onProgress?.({
-                    stage: 'Detecting pitch...',
-                    progress: 20 + (i / totalFrames) * 60
-                });
-            }
-
-            const startSample = i * hopSize;
-            const frame = channelData.slice(startSample, startSample + frameSize);
-
-            // RMS check for silence
-            const rms = this.calculateRMS(frame);
-            if (rms < 0.01) continue;
-
-            const pitch = this.detectPitchAutocorrelation(frame, sampleRate);
-            if (pitch && pitch.confidence > 0.8) {
-                pitchResults.push({
-                    time: startSample / sampleRate,
-                    pitch: pitch.midiNote,
-                    confidence: pitch.confidence
-                });
-            }
-        }
-
-        onProgress?.({ stage: 'Building MIDI notes...', progress: 85 });
-
-        // Group continuous pitches into notes
-        const notes = this.groupPitchesToNotes(pitchResults);
-
-        onProgress?.({ stage: 'Complete', progress: 100 });
-
-        return { notes };
-    }
-
-    /**
-     * Polyphonic harmony extraction (simplified - detects main pitch + likely harmonics)
-     */
-    private async convertHarmony(
-        buffer: AudioBuffer,
-        onProgress?: (progress: ConversionProgress) => void
-    ): Promise<ConversionResult> {
-        const sampleRate = buffer.sampleRate;
-        const channelData = buffer.getChannelData(0);
-
-        const frameSize = 4096; // Larger for better frequency resolution
-        const hopSize = 2048;
-        const totalFrames = Math.floor((channelData.length - frameSize) / hopSize);
-
-        const chordResults: Array<{ time: number; pitches: number[] }> = [];
-
-        for (let i = 0; i < totalFrames; i++) {
-            if (i % 20 === 0) {
-                onProgress?.({
-                    stage: 'Analyzing harmony...',
-                    progress: 20 + (i / totalFrames) * 60
-                });
-            }
-
-            const startSample = i * hopSize;
-            const frame = channelData.slice(startSample, startSample + frameSize);
-
-            const rms = this.calculateRMS(frame);
-            if (rms < 0.01) continue;
-
-            const pitches = this.detectMultiplePitches(frame, sampleRate);
-            if (pitches.length > 0) {
-                chordResults.push({
-                    time: startSample / sampleRate,
-                    pitches
-                });
-            }
-        }
-
-        onProgress?.({ stage: 'Building chords...', progress: 85 });
-
-        // Convert to MIDI notes with chord voicings
-        const notes = this.groupChordsToNotes(chordResults);
-
-        onProgress?.({ stage: 'Complete', progress: 100 });
-
-        return { notes };
-    }
-
-    /**
-     * Drum/percussion transient detection
-     */
-    private async convertDrums(
-        buffer: AudioBuffer,
-        onProgress?: (progress: ConversionProgress) => void
-    ): Promise<ConversionResult> {
-        const sampleRate = buffer.sampleRate;
-        const channelData = buffer.getChannelData(0);
-
-        const frameSize = 1024;
-        const hopSize = 256;
-        const totalFrames = Math.floor((channelData.length - frameSize) / hopSize);
-
-        const transients: Array<{ time: number; velocity: number; type: 'kick' | 'snare' | 'hat' }> = [];
-        let prevEnergy = 0;
-
-        for (let i = 0; i < totalFrames; i++) {
-            if (i % 100 === 0) {
-                onProgress?.({
-                    stage: 'Detecting transients...',
-                    progress: 20 + (i / totalFrames) * 60
-                });
-            }
-
-            const startSample = i * hopSize;
-            const frame = channelData.slice(startSample, startSample + frameSize);
-
-            const energy = this.calculateRMS(frame);
-            const onset = energy - prevEnergy;
-
-            // Detect sharp energy increase (transient)
-            if (onset > 0.1 && energy > 0.05) {
-                const spectralCentroid = this.calculateSpectralCentroid(frame, sampleRate);
-                let type: 'kick' | 'snare' | 'hat' = 'snare';
-
-                // Classify by spectral centroid
-                if (spectralCentroid < 200) type = 'kick';
-                else if (spectralCentroid > 4000) type = 'hat';
-
-                transients.push({
-                    time: startSample / sampleRate,
-                    velocity: Math.min(1, energy * 2),
-                    type
-                });
-            }
-
-            prevEnergy = energy;
-        }
-
-        onProgress?.({ stage: 'Building drum pattern...', progress: 85 });
-
-        // Convert transients to MIDI notes (GM drum map)
-        const drumMap = { kick: 36, snare: 38, hat: 42 };
-        const notes: MidiNote[] = transients.map((t, i) => ({
-            id: `drum-${i}`,
-            pitch: drumMap[t.type],
-            start: t.time * 4, // Convert seconds to beats (assuming 120 BPM / 0.5s per beat)
-            duration: 0.25,
-            velocity: t.velocity
-        }));
-
-        onProgress?.({ stage: 'Complete', progress: 100 });
-
-        return { notes };
-    }
-
-    /**
-     * Autocorrelation-based pitch detection (YIN-like)
-     */
-    private detectPitchAutocorrelation(
-        buffer: Float32Array,
-        sampleRate: number
-    ): { frequency: number; midiNote: number; confidence: number } | null {
-        const minFreq = 60;   // ~B1
-        const maxFreq = 1200; // ~D6
-        const minPeriod = Math.floor(sampleRate / maxFreq);
-        const maxPeriod = Math.floor(sampleRate / minFreq);
-
-        // Calculate normalized difference function
-        const yinBuffer = new Float32Array(maxPeriod);
-
-        for (let tau = minPeriod; tau < maxPeriod; tau++) {
-            let sum = 0;
-            for (let j = 0; j < buffer.length - tau; j++) {
-                const diff = buffer[j] - buffer[j + tau];
-                sum += diff * diff;
-            }
-            yinBuffer[tau] = sum;
-        }
-
-        // Cumulative mean normalized difference
-        yinBuffer[0] = 1;
-        let runningSum = 0;
-        for (let tau = 1; tau < maxPeriod; tau++) {
-            runningSum += yinBuffer[tau];
-            yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
-        }
-
-        // Find first minimum below threshold
-        const threshold = 0.15;
-        let bestPeriod = -1;
-        let bestValue = 1;
-
-        for (let tau = minPeriod; tau < maxPeriod - 1; tau++) {
-            if (yinBuffer[tau] < threshold && yinBuffer[tau] < yinBuffer[tau - 1] && yinBuffer[tau] < yinBuffer[tau + 1]) {
-                if (yinBuffer[tau] < bestValue) {
-                    bestValue = yinBuffer[tau];
-                    bestPeriod = tau;
-                }
-            }
-        }
-
-        if (bestPeriod < 0) return null;
-
-        // Parabolic interpolation
-        const prev = yinBuffer[bestPeriod - 1];
-        const curr = yinBuffer[bestPeriod];
-        const next = yinBuffer[bestPeriod + 1];
-        const offset = (prev - next) / (2 * (prev - 2 * curr + next));
-        const refinedPeriod = bestPeriod + offset;
-
-        const frequency = sampleRate / refinedPeriod;
-        const midiNote = Math.round(12 * Math.log2(frequency / 440) + 69);
-        const confidence = 1 - bestValue;
-
-        return { frequency, midiNote, confidence };
-    }
-
-    /**
-     * Detect multiple pitches using FFT peak detection
-     */
-    private detectMultiplePitches(buffer: Float32Array, sampleRate: number): number[] {
-        // Simple FFT-based approach
-        const fft = this.computeFFT(buffer);
-        const peaks = this.findSpectralPeaks(fft, sampleRate);
-
-        // Convert frequencies to MIDI notes
-        const midiNotes = peaks
-            .filter(f => f > 60 && f < 2000)
-            .map(f => Math.round(12 * Math.log2(f / 440) + 69))
-            .filter((v, i, a) => a.indexOf(v) === i) // Unique
-            .slice(0, 4); // Max 4 notes per chord
-
-        return midiNotes;
-    }
-
-    /**
-     * Simple FFT implementation using DFT (for demo - use Web Audio FFT in production)
-     */
-    private computeFFT(buffer: Float32Array): Float32Array {
-        const N = buffer.length;
-        const result = new Float32Array(N / 2);
-
-        for (let k = 0; k < N / 2; k++) {
-            let real = 0;
-            let imag = 0;
-            for (let n = 0; n < N; n++) {
-                const angle = (2 * Math.PI * k * n) / N;
-                real += buffer[n] * Math.cos(angle);
-                imag -= buffer[n] * Math.sin(angle);
-            }
-            result[k] = Math.sqrt(real * real + imag * imag);
-        }
-
-        return result;
-    }
-
-    /**
-     * Find peaks in spectrum
-     */
-    private findSpectralPeaks(spectrum: Float32Array, sampleRate: number): number[] {
-        const peaks: number[] = [];
-        const binWidth = sampleRate / (spectrum.length * 2);
-
-        for (let i = 2; i < spectrum.length - 2; i++) {
-            if (spectrum[i] > spectrum[i - 1] &&
-                spectrum[i] > spectrum[i + 1] &&
-                spectrum[i] > spectrum[i - 2] &&
-                spectrum[i] > spectrum[i + 2] &&
-                spectrum[i] > 0.1) {
-                peaks.push(i * binWidth);
-            }
-        }
-
-        // Sort by magnitude and return top peaks
-        return peaks.slice(0, 10);
-    }
-
-    /**
-     * Calculate spectral centroid for drum classification
-     */
-    private calculateSpectralCentroid(buffer: Float32Array, sampleRate: number): number {
-        const fft = this.computeFFT(buffer);
-        const binWidth = sampleRate / (buffer.length);
-
-        let weightedSum = 0;
-        let sum = 0;
-
-        for (let i = 0; i < fft.length; i++) {
-            weightedSum += i * binWidth * fft[i];
-            sum += fft[i];
-        }
-
-        return sum > 0 ? weightedSum / sum : 0;
-    }
-
-    /**
-     * Calculate RMS (loudness)
-     */
-    private calculateRMS(buffer: Float32Array): number {
-        let sum = 0;
-        for (let i = 0; i < buffer.length; i++) {
-            sum += buffer[i] * buffer[i];
-        }
-        return Math.sqrt(sum / buffer.length);
-    }
-
-    /**
-     * Group continuous pitch detections into discrete notes
-     */
-    private groupPitchesToNotes(
-        pitchResults: Array<{ time: number; pitch: number; confidence: number }>
-    ): MidiNote[] {
-        if (pitchResults.length === 0) return [];
-
-        const notes: MidiNote[] = [];
-        let currentNote: { pitch: number; startTime: number; endTime: number } | null = null;
-        const minNoteDuration = 0.05; // 50ms minimum
-
-        for (const result of pitchResults) {
-            if (!currentNote) {
-                currentNote = { pitch: result.pitch, startTime: result.time, endTime: result.time };
-            } else if (Math.abs(result.pitch - currentNote.pitch) <= 1) {
-                // Same note (allow ±1 semitone tolerance)
-                currentNote.endTime = result.time;
-            } else {
-                // New note - save previous
-                const duration = currentNote.endTime - currentNote.startTime;
-                if (duration >= minNoteDuration) {
-                    notes.push({
-                        id: `note-${notes.length}`,
-                        pitch: currentNote.pitch,
-                        start: currentNote.startTime * 4, // Convert to beats (120 BPM)
-                        duration: Math.max(0.25, duration * 4),
-                        velocity: 0.8
+                if (type === 'progress' && progress) {
+                    onProgress?.({
+                        stage: progress.stage,
+                        progress: progress.value
                     });
+                } else if (type === 'result' && data) {
+                    worker.terminate();
+                    resolve(data);
+                } else if (type === 'error') {
+                    worker.terminate();
+                    reject(new Error(error || 'Unknown worker error'));
                 }
-                currentNote = { pitch: result.pitch, startTime: result.time, endTime: result.time };
-            }
-        }
+            };
 
-        // Save last note
-        if (currentNote) {
-            const duration = currentNote.endTime - currentNote.startTime;
-            if (duration >= minNoteDuration) {
-                notes.push({
-                    id: `note-${notes.length}`,
-                    pitch: currentNote.pitch,
-                    start: currentNote.startTime * 4,
-                    duration: Math.max(0.25, duration * 4),
-                    velocity: 0.8
-                });
-            }
-        }
+            worker.onerror = (e) => {
+                worker.terminate();
+                reject(e);
+            };
 
-        return notes;
-    }
+            const request: WorkerRequest = {
+                id,
+                type: 'convert',
+                buffer: channelData,
+                sampleRate,
+                mode
+            };
 
-    /**
-     * Group chord detections into notes
-     */
-    private groupChordsToNotes(
-        chordResults: Array<{ time: number; pitches: number[] }>
-    ): MidiNote[] {
-        if (chordResults.length === 0) return [];
-
-        const notes: MidiNote[] = [];
-        let currentChord: { pitches: number[]; startTime: number; endTime: number } | null = null;
-
-        for (const result of chordResults) {
-            const pitchesKey = result.pitches.sort().join(',');
-            const currentKey = currentChord?.pitches.sort().join(',');
-
-            if (!currentChord || pitchesKey !== currentKey) {
-                // Save previous chord
-                if (currentChord) {
-                    const duration = currentChord.endTime - currentChord.startTime;
-                    for (const pitch of currentChord.pitches) {
-                        notes.push({
-                            id: `chord-${notes.length}`,
-                            pitch,
-                            start: currentChord.startTime * 4,
-                            duration: Math.max(0.5, duration * 4),
-                            velocity: 0.75
-                        });
-                    }
-                }
-                currentChord = { pitches: result.pitches, startTime: result.time, endTime: result.time };
-            } else {
-                currentChord.endTime = result.time;
-            }
-        }
-
-        // Save last chord
-        if (currentChord) {
-            const duration = currentChord.endTime - currentChord.startTime;
-            for (const pitch of currentChord.pitches) {
-                notes.push({
-                    id: `chord-${notes.length}`,
-                    pitch,
-                    start: currentChord.startTime * 4,
-                    duration: Math.max(0.5, duration * 4),
-                    velocity: 0.75
-                });
-            }
-        }
-
-        return notes;
+            // Post message with buffer transfer if supported?
+            // channelData is a view on the buffer. We should likely slice it or ensure we don't need it here anymore.
+            // But Float32Array itself isn't transferable, its buffer is.
+            // However, copying is fine for typical audio clips (a few MBs).
+            worker.postMessage(request);
+        });
     }
 
     /**
      * Get note name from MIDI number
      */
     getNoteName(midiNote: number): string {
+        const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
         const octave = Math.floor(midiNote / 12) - 1;
         const note = NOTE_NAMES[midiNote % 12];
         return `${note}${octave}`;
