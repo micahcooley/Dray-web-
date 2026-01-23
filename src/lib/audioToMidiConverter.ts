@@ -98,12 +98,22 @@ class AudioToMidiConverter {
         buffer: AudioBuffer,
         onProgress?: (progress: ConversionProgress) => void
     ): Promise<ConversionResult> {
+        // Validate input
+        if (buffer.numberOfChannels === 0) {
+            throw new Error('Audio buffer has no channels');
+        }
+        
         const sampleRate = buffer.sampleRate;
         const channelData = buffer.getChannelData(0);
 
         // Analysis parameters
         const frameSize = 2048; // ~46ms at 44100Hz
         const hopSize = 512;    // 11.6ms - gives good time resolution
+        
+        if (channelData.length < frameSize) {
+            throw new Error(`Audio too short: need at least ${frameSize} samples, got ${channelData.length}`);
+        }
+        
         const totalFrames = Math.floor((channelData.length - frameSize) / hopSize);
 
         const pitchResults: Array<{ time: number; pitch: number; confidence: number }> = [];
@@ -278,11 +288,9 @@ class AudioToMidiConverter {
         const n = buffer.length;
 
         // FFT size must be power of 2 and >= n + maxPeriod
-        // For n=2048, maxPeriod~735, we need 4096
-        const fftSize = 4096;
-        // Ensure buffer length + maxPeriod fits in fftSize?
-        // If buffer is larger than expected (e.g. if params change), logic might break.
-        // But frameSize is hardcoded to 2048 in convertMelody.
+        // Dynamically calculate to handle different buffer sizes
+        const requiredSize = n + maxPeriod;
+        const fftSize = 1 << Math.ceil(Math.log2(requiredSize));
 
         const { fft, real, imag } = this.getFFTContext(fftSize);
 
@@ -317,9 +325,10 @@ class AudioToMidiConverter {
         fft.inverse(real, imag);
 
         // 3. Difference Function
-        const yinBuffer = new Float32Array(maxPeriod);
+        // Allocate extra space to avoid out-of-bounds access during minimum finding
+        const yinBuffer = new Float32Array(maxPeriod + 1);
 
-        for (let tau = minPeriod; tau < maxPeriod; tau++) {
+        for (let tau = minPeriod; tau <= maxPeriod; tau++) {
             // Term 1: P[N-tau]
             const term1 = pTerms[n - tau];
             // Term 2: P[N] - P[tau]
@@ -333,9 +342,14 @@ class AudioToMidiConverter {
         // Cumulative mean normalized difference
         yinBuffer[0] = 1;
         let runningSum = 0;
-        for (let tau = 1; tau < maxPeriod; tau++) {
+        for (let tau = 1; tau <= maxPeriod; tau++) {
             runningSum += yinBuffer[tau];
-            yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+            // Guard against division by zero
+            if (runningSum > 0) {
+                yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+            } else {
+                yinBuffer[tau] = 1;
+            }
         }
 
         // Find first minimum below threshold
@@ -358,7 +372,9 @@ class AudioToMidiConverter {
         const prev = yinBuffer[bestPeriod - 1];
         const curr = yinBuffer[bestPeriod];
         const next = yinBuffer[bestPeriod + 1];
-        const offset = (prev - next) / (2 * (prev - 2 * curr + next));
+        const denominator = 2 * (prev - 2 * curr + next);
+        // Guard against division by zero (flat minimum)
+        const offset = Math.abs(denominator) > 1e-10 ? (prev - next) / denominator : 0;
         const refinedPeriod = bestPeriod + offset;
 
         const frequency = sampleRate / refinedPeriod;
