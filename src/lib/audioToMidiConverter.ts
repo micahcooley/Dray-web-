@@ -1,6 +1,7 @@
 'use client';
 
 import { audioEngine } from './audioEngine';
+import { FFT } from './fft';
 import type { MidiNote } from './types';
 
 /**
@@ -29,8 +30,34 @@ type ConversionMode = 'melody' | 'harmony' | 'drums';
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 class AudioToMidiConverter {
+    private fftCache: Map<number, FFT> = new Map();
+
     async initialize() {
         await audioEngine.initialize();
+    }
+
+    private getFFT(size: number): FFT {
+        let fft = this.fftCache.get(size);
+        if (!fft) {
+            // Find next power of 2 if not already
+            if (!Number.isInteger(Math.log2(size))) {
+                let p2 = 1;
+                while (p2 < size) p2 <<= 1;
+                size = p2;
+                // If we resized, check cache again?
+                // No, the caller expects an FFT that can handle 'size'.
+                // My FFT class requires size to be power of 2.
+                // If the input buffer size isn't power of 2, the caller should pad it or we handle it.
+                // However, the helper 'computeFFTMagnitude' handles copying.
+                // But for caching, we should use the power-of-2 size as key.
+            }
+            fft = this.fftCache.get(size);
+            if (!fft) {
+                fft = new FFT(size);
+                this.fftCache.set(size, fft);
+            }
+        }
+        return fft;
     }
 
     private getContext(): AudioContext {
@@ -240,7 +267,7 @@ class AudioToMidiConverter {
     }
 
     /**
-     * Autocorrelation-based pitch detection (YIN-like)
+     * Autocorrelation-based pitch detection (YIN-like) - Optimized with FFT
      */
     private detectPitchAutocorrelation(
         buffer: Float32Array,
@@ -251,16 +278,57 @@ class AudioToMidiConverter {
         const minPeriod = Math.floor(sampleRate / maxFreq);
         const maxPeriod = Math.floor(sampleRate / minFreq);
 
-        // Calculate normalized difference function
+        const n = buffer.length;
+
+        // 1. Calculate Difference Function using FFT (Fast YIN)
+        // d(tau) = sum(x[j]^2) + sum(x[j+tau]^2) - 2 * sum(x[j]*x[j+tau])
+
+        // Determine FFT size (power of 2 >= n + maxPeriod)
+        let fftSize = 1;
+        while (fftSize < n + maxPeriod) fftSize <<= 1;
+
+        const fft = this.getFFT(fftSize);
+
+        // Precompute energy terms (prefix sum of squares)
+        const prefixSumSq = new Float32Array(n + 1);
+        prefixSumSq[0] = 0;
+        for (let i = 0; i < n; i++) {
+            prefixSumSq[i + 1] = prefixSumSq[i] + buffer[i] * buffer[i];
+        }
+
+        // Compute Correlation via FFT
+        const real = new Float32Array(fftSize);
+        const imag = new Float32Array(fftSize);
+
+        // Copy buffer into real part (padded with zeros)
+        real.set(buffer);
+
+        fft.forward(real, imag);
+
+        // Compute Power Spectrum for Autocorrelation
+        for (let i = 0; i < fftSize; i++) {
+            const r = real[i];
+            const im = imag[i];
+            real[i] = r * r + im * im;
+            imag[i] = 0;
+        }
+
+        fft.inverse(real, imag);
+
+        // Assemble difference function
         const yinBuffer = new Float32Array(maxPeriod);
 
         for (let tau = minPeriod; tau < maxPeriod; tau++) {
-            let sum = 0;
-            for (let j = 0; j < buffer.length - tau; j++) {
-                const diff = buffer[j] - buffer[j + tau];
-                sum += diff * diff;
-            }
-            yinBuffer[tau] = sum;
+            // Term 1: Sum of squares of x[0...n-tau-1]
+            const term1 = prefixSumSq[n - tau];
+
+            // Term 2: Sum of squares of x[tau...n-1]
+            const term2 = prefixSumSq[n] - prefixSumSq[tau];
+
+            // Term 3: 2 * Correlation[tau]
+            const term3 = 2 * real[tau];
+
+            yinBuffer[tau] = term1 + term2 - term3;
         }
 
         // Cumulative mean normalized difference
@@ -306,7 +374,7 @@ class AudioToMidiConverter {
      */
     private detectMultiplePitches(buffer: Float32Array, sampleRate: number): number[] {
         // Simple FFT-based approach
-        const fft = this.computeFFT(buffer);
+        const fft = this.computeFFTMagnitude(buffer);
         const peaks = this.findSpectralPeaks(fft, sampleRate);
 
         // Convert frequencies to MIDI notes
@@ -320,21 +388,39 @@ class AudioToMidiConverter {
     }
 
     /**
-     * Simple FFT implementation using DFT (for demo - use Web Audio FFT in production)
+     * Compute FFT Magnitude spectrum using optimized FFT
      */
-    private computeFFT(buffer: Float32Array): Float32Array {
-        const N = buffer.length;
-        const result = new Float32Array(N / 2);
+    private computeFFTMagnitude(buffer: Float32Array): Float32Array {
+        // Determine size (next power of 2)
+        let size = 1;
+        while (size < buffer.length) size <<= 1;
 
-        for (let k = 0; k < N / 2; k++) {
-            let real = 0;
-            let imag = 0;
-            for (let n = 0; n < N; n++) {
-                const angle = (2 * Math.PI * k * n) / N;
-                real += buffer[n] * Math.cos(angle);
-                imag -= buffer[n] * Math.sin(angle);
-            }
-            result[k] = Math.sqrt(real * real + imag * imag);
+        const fft = this.getFFT(size);
+
+        const real = new Float32Array(size);
+        const imag = new Float32Array(size);
+
+        // Copy buffer (zero-padded)
+        real.set(buffer);
+
+        fft.forward(real, imag);
+
+        // Return first half (magnitude)
+        // Note: Using size/2 or buffer.length/2?
+        // Original code returned buffer.length / 2.
+        // If we padded, the bins resolution changes.
+        // Original code did a DFT of size N (buffer.length).
+        // If we pad to next power of 2, say 1024 to 2048, bins are closer.
+        // We should probably return the full useful spectrum up to Nyquist relative to 'size'.
+        // But downstream expects bins corresponding to original size?
+        // Actually, findSpectralPeaks uses binWidth = sampleRate / (spectrum.length * 2).
+        // If spectrum.length changes, binWidth changes.
+        // So we just need to return consistent spectrum.
+        const outputSize = size / 2;
+        const result = new Float32Array(outputSize);
+
+        for (let i = 0; i < outputSize; i++) {
+            result[i] = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
         }
 
         return result;
@@ -365,8 +451,15 @@ class AudioToMidiConverter {
      * Calculate spectral centroid for drum classification
      */
     private calculateSpectralCentroid(buffer: Float32Array, sampleRate: number): number {
-        const fft = this.computeFFT(buffer);
-        const binWidth = sampleRate / (buffer.length);
+        const fft = this.computeFFTMagnitude(buffer);
+        // computeFFTMagnitude returns size/2 bins.
+        // If buffer was 1024, fft size is 512.
+        // Original computeFFT returned 512.
+        // But if buffer was not power of 2, we padded.
+        // Here buffer is 1024 (frameSize in convertDrums). So no padding.
+        // Bin width: sampleRate / FFT_SIZE.
+        // FFT_SIZE is 2 * fft.length.
+        const binWidth = sampleRate / (fft.length * 2);
 
         let weightedSum = 0;
         let sum = 0;
