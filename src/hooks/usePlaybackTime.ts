@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useEffect, useSyncExternalStore } from 'react';
+import { useRef, useEffect, useLayoutEffect, useSyncExternalStore } from 'react';
 import { audioScheduler } from '../lib/scheduler';
 
 // This is the time value that updates 60fps - NOT in React state
@@ -79,9 +79,11 @@ export function usePlaybackTimeRef() {
 export function usePlaybackCallback(callback: (time: number, beat: number) => void) {
     const callbackRef = useRef(callback);
 
-    useEffect(() => {
+    // Use useLayoutEffect to update the ref synchronously before paint
+    // This ensures the latest callback is always used without triggering re-renders
+    useLayoutEffect(() => {
         callbackRef.current = callback;
-    }, [callback]);
+    });
 
     useEffect(() => {
         const unsubscribe = audioScheduler.subscribe((time, step) => {
