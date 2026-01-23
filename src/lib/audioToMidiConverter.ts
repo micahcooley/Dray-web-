@@ -114,7 +114,7 @@ class AudioToMidiConverter {
             if (rms < 0.01) continue;
 
             const pitch = this.detectPitchAutocorrelation(frame, sampleRate);
-            if (pitch && pitch.confidence > 0.8) {
+            if (pitch && pitch.confidence > 0.8 && isFinite(pitch.midiNote)) {
                 pitchResults.push({
                     time: startSample / sampleRate,
                     pitch: pitch.midiNote,
@@ -367,7 +367,9 @@ class AudioToMidiConverter {
         const prev = yinBuffer[bestPeriod - 1];
         const curr = yinBuffer[bestPeriod];
         const next = yinBuffer[bestPeriod + 1];
-        const offset = (prev - next) / (2 * (prev - 2 * curr + next));
+        const denominator = 2 * (prev - 2 * curr + next);
+        // Avoid division by zero when the three points are collinear
+        const offset = Math.abs(denominator) > 1e-10 ? (prev - next) / denominator : 0;
         const refinedPeriod = bestPeriod + offset;
 
         const frequency = sampleRate / refinedPeriod;
@@ -467,13 +469,14 @@ class AudioToMidiConverter {
      */
     private calculateSpectralCentroid(buffer: Float32Array, sampleRate: number): number {
         const fft = this.computeMagnitudeSpectrum(buffer);
-        // Note: computeMagnitudeSpectrum returns N/2 bins.
-        // Original computeFFT returned N/2 bins.
-
-        const binWidth = sampleRate / (buffer.length);
-        // Warning: buffer.length might be different if we padded in computeMagnitudeSpectrum?
-        // But here we passed `buffer`.
-        // If `buffer` was 1024, fft size is 1024. binWidth = SR/1024.
+        // Note: computeMagnitudeSpectrum returns N/2 bins where N is the FFT size (power of 2).
+        // The FFT size may be larger than buffer.length due to padding.
+        
+        // Calculate the actual FFT size used
+        let fftSize = 1;
+        while (fftSize < buffer.length) fftSize <<= 1;
+        
+        const binWidth = sampleRate / fftSize;
 
         let weightedSum = 0;
         let sum = 0;
