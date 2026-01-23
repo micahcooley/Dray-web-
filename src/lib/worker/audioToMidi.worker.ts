@@ -256,7 +256,11 @@ function detectPitchAutocorrelation(
     let runningSum = 0;
     for (let tau = 1; tau < maxPeriod; tau++) {
         runningSum += yinBuffer[tau];
-        yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+        if (runningSum > 0) {
+            yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+        } else {
+            yinBuffer[tau] = 1;
+        }
     }
 
     const threshold = 0.15;
@@ -277,7 +281,8 @@ function detectPitchAutocorrelation(
     const prev = yinBuffer[bestPeriod - 1];
     const curr = yinBuffer[bestPeriod];
     const next = yinBuffer[bestPeriod + 1];
-    const offset = (prev - next) / (2 * (prev - 2 * curr + next));
+    const denominator = prev - 2 * curr + next;
+    const offset = Math.abs(denominator) > 1e-10 ? (prev - next) / (2 * denominator) : 0;
     const refinedPeriod = bestPeriod + offset;
 
     const frequency = sampleRate / refinedPeriod;
@@ -405,8 +410,8 @@ function groupChordsToNotes(
     let currentChord: { pitches: number[]; startTime: number; endTime: number } | null = null;
 
     for (const result of chordResults) {
-        const pitchesKey = result.pitches.sort().join(',');
-        const currentKey = currentChord?.pitches.sort().join(',');
+        const pitchesKey = [...result.pitches].sort().join(',');
+        const currentKey = currentChord ? [...currentChord.pitches].sort().join(',') : null;
 
         if (!currentChord || pitchesKey !== currentKey) {
             if (currentChord) {
