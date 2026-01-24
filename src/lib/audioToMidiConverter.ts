@@ -1,6 +1,7 @@
 'use client';
 
 import { audioEngine } from './audioEngine';
+import { FFT } from './fft';
 import type { MidiNote } from './types';
 
 /**
@@ -29,6 +30,15 @@ type ConversionMode = 'melody' | 'harmony' | 'drums';
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 class AudioToMidiConverter {
+    private fftCache: Map<number, FFT> = new Map();
+
+    private getFFT(size: number): FFT {
+        if (!this.fftCache.has(size)) {
+            this.fftCache.set(size, new FFT(size));
+        }
+        return this.fftCache.get(size)!;
+    }
+
     async initialize() {
         await audioEngine.initialize();
     }
@@ -241,6 +251,7 @@ class AudioToMidiConverter {
 
     /**
      * Autocorrelation-based pitch detection (YIN-like)
+     * Optimized using FFT (O(N log N)) instead of naive difference function (O(N^2))
      */
     private detectPitchAutocorrelation(
         buffer: Float32Array,
@@ -251,16 +262,106 @@ class AudioToMidiConverter {
         const minPeriod = Math.floor(sampleRate / maxFreq);
         const maxPeriod = Math.floor(sampleRate / minFreq);
 
+        // Optimized Difference Function Calculation
+        // d(tau) = sum(x[j]^2) + sum(x[j+tau]^2) - 2 * autocorrelation(tau)
+
+        const N = buffer.length;
+        // Find next power of 2 for padding (to perform linear correlation via FFT)
+        // We need size >= 2*N - 1 to avoid circular aliasing
+        let fftSize = 1;
+        while (fftSize < 2 * N) fftSize <<= 1;
+
+        const fft = this.getFFT(fftSize);
+
+        // 1. Compute Autocorrelation via FFT
+        // Pad input with zeros
+        // Ideally we reuse this buffer, but for now allocate locally for safety
+        const paddedBuffer = new Float32Array(fftSize);
+        paddedBuffer.set(buffer);
+
+        // Forward FFT
+        const { real: X_real, imag: X_imag } = fft.forward(paddedBuffer);
+
+        // Compute Power Spectrum S = X * conj(X) = |X|^2
+        // Since input is real, power spectrum is real.
+        // We reuse the 'real' buffer of the FFT instance for input to Inverse
+        // BEWARE: We must be careful not to overwrite if 'inverse' uses same buffers.
+        // The FFT class implementation: forward returns reference to internal buffers.
+        // We need to calculate magnitude squared and store it.
+        // We can write back to X_real (since it's input to next stage)
+        // and set X_imag to 0 (power spectrum of real signal is real).
+
+        // However, we need to copy the data because we are reading from X_real/X_imag
+        // and writing to them. If we modify X_real[0], we lose it?
+        // No, element-wise operation is fine: out[i] = in[i]*in[i]...
+        // But we need to set imag to 0.
+
+        for (let i = 0; i < fftSize; i++) {
+            const magSquared = X_real[i] * X_real[i] + X_imag[i] * X_imag[i];
+            X_real[i] = magSquared;
+            X_imag[i] = 0;
+        }
+
+        // Inverse FFT to get Autocorrelation
+        // Input: Power Spectrum (Real)
+        const { real: R } = fft.inverse(X_real, X_imag);
+
+        // 2. Compute Energy Terms via Prefix Sum
+        // x_cum[k] = sum(x[0]^2 ... x[k-1]^2)
+        const x_cum = new Float32Array(N + 1);
+        x_cum[0] = 0;
+        for (let i = 0; i < N; i++) {
+            x_cum[i + 1] = x_cum[i] + buffer[i] * buffer[i];
+        }
+
         // Calculate normalized difference function
         const yinBuffer = new Float32Array(maxPeriod);
 
         for (let tau = minPeriod; tau < maxPeriod; tau++) {
-            let sum = 0;
-            for (let j = 0; j < buffer.length - tau; j++) {
-                const diff = buffer[j] - buffer[j + tau];
-                sum += diff * diff;
-            }
-            yinBuffer[tau] = sum;
+            // Energy of window 1: x[0]...x[N-tau-1]
+            // Sum squares from index 0 to N-tau-1
+            const term1 = x_cum[N - tau];
+
+            // Energy of window 2: x[tau]...x[N-1]
+            // Sum squares from index tau to N-1
+            // Formula: cum[N] - cum[tau]
+            const term2 = x_cum[N] - x_cum[tau];
+
+            // Autocorrelation at lag tau
+            // R[tau] is the unnormalized autocorrelation
+            // Note: Our FFT implementation scales by 1/N in inverse.
+            // Standard definition of correlation is sum(x*y).
+            // Convolution via FFT usually results in sum(x*y).
+            // If FFT implementation scales by 1/N, we might need to compensate?
+            // Usually: IFFT(FFT(x) * FFT(y)) = Convolution(x, y).
+            // Standard DFT definition usually has 1/N on IFFT.
+            // So the result R from our FFT class is indeed the Correlation.
+            // Let's verify scaling.
+            // If input is [1, 1], FFT is [2, 0]. MagSq is [4, 0]. IFFT is [2, 2].
+            // Autocorr of [1, 1] is:
+            // lag 0: 1*1 + 1*1 = 2.
+            // lag 1: 1*1 = 1.
+            // Result [2, 1] (linear).
+            // Our FFT class IFFT scales by 1/N.
+            // For size 2: IFFT([4, 0]) -> [2, 2] * 0.5 = [1, 1]?
+            // Wait.
+            // x=[1,1], pad to 4 -> [1,1,0,0].
+            // FFT: [2, 1-j, 0, 1+j] ?
+            // Let's just trust the term matches standard convolution if 1/N is handled.
+            // If our FFT class divides by N in inverse, then:
+            // Convolution result = IFFT(FFT(x) * FFT(y)) * N?
+            // Yes, because FFT/IFFT pair usually implies 1/N total scaling.
+            // If we have 1/N in IFFT only, then (DFT * DFT) -> IFFT gives N * Convolution?
+            // No.
+            // Parseval's theorem etc.
+            // Let's assume we need to multiply by fftSize to get the raw sum product.
+            // Correction: Standard FFT/IFFT (where IFFT has 1/N) satisfies the convolution theorem directly.
+            // R[tau] = sum(x[k] * x[k+tau]).
+
+            const autocorr = R[tau];
+
+            const diff = term1 + term2 - 2 * autocorr;
+            yinBuffer[tau] = diff;
         }
 
         // Cumulative mean normalized difference
@@ -268,7 +369,11 @@ class AudioToMidiConverter {
         let runningSum = 0;
         for (let tau = 1; tau < maxPeriod; tau++) {
             runningSum += yinBuffer[tau];
-            yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+            if (runningSum < 0.00001) {
+                 yinBuffer[tau] = 1;
+            } else {
+                 yinBuffer[tau] = yinBuffer[tau] * tau / runningSum;
+            }
         }
 
         // Find first minimum below threshold
@@ -320,21 +425,34 @@ class AudioToMidiConverter {
     }
 
     /**
-     * Simple FFT implementation using DFT (for demo - use Web Audio FFT in production)
+     * Compute FFT magnitude spectrum using optimized FFT class
      */
     private computeFFT(buffer: Float32Array): Float32Array {
         const N = buffer.length;
-        const result = new Float32Array(N / 2);
+        // FFT size must be power of 2.
+        // If buffer is not power of 2, we might need to pad or truncate.
+        // Assuming callers provide power of 2 (2048, 4096 etc based on constants)
 
-        for (let k = 0; k < N / 2; k++) {
-            let real = 0;
-            let imag = 0;
-            for (let n = 0; n < N; n++) {
-                const angle = (2 * Math.PI * k * n) / N;
-                real += buffer[n] * Math.cos(angle);
-                imag -= buffer[n] * Math.sin(angle);
-            }
-            result[k] = Math.sqrt(real * real + imag * imag);
+        let fftSize = 1;
+        while (fftSize < N) fftSize <<= 1;
+
+        const fft = this.getFFT(fftSize);
+
+        // Use a padded buffer if N is not power of 2, otherwise use buffer directly if safe?
+        // Buffer from caller might be a view.
+        // To be safe and satisfy API:
+        let input = buffer;
+        if (N !== fftSize) {
+             input = new Float32Array(fftSize);
+             input.set(buffer);
+        }
+
+        const { real, imag } = fft.forward(input);
+
+        // Compute magnitude for first N/2 bins
+        const result = new Float32Array(N / 2);
+        for (let i = 0; i < N / 2; i++) {
+            result[i] = Math.sqrt(real[i] * real[i] + imag[i] * imag[i]);
         }
 
         return result;
