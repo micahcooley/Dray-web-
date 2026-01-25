@@ -1,6 +1,7 @@
 'use client';
 
 import { audioEngine } from './audioEngine';
+import { FFT } from './fft';
 import type { MidiNote } from './types';
 
 /**
@@ -29,12 +30,23 @@ type ConversionMode = 'melody' | 'harmony' | 'drums';
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 
 class AudioToMidiConverter {
+    private fftCache: Map<number, FFT> = new Map();
+
     async initialize() {
         await audioEngine.initialize();
     }
 
     private getContext(): AudioContext {
         return audioEngine.getContext();
+    }
+
+    private getFFT(size: number): FFT {
+        let fft = this.fftCache.get(size);
+        if (!fft) {
+            fft = new FFT(size);
+            this.fftCache.set(size, fft);
+        }
+        return fft;
     }
 
     /**
@@ -306,7 +318,7 @@ class AudioToMidiConverter {
      */
     private detectMultiplePitches(buffer: Float32Array, sampleRate: number): number[] {
         // Simple FFT-based approach
-        const fft = this.computeFFT(buffer);
+        const fft = this.getFFT(buffer.length).forward(buffer);
         const peaks = this.findSpectralPeaks(fft, sampleRate);
 
         // Convert frequencies to MIDI notes
@@ -317,27 +329,6 @@ class AudioToMidiConverter {
             .slice(0, 4); // Max 4 notes per chord
 
         return midiNotes;
-    }
-
-    /**
-     * Simple FFT implementation using DFT (for demo - use Web Audio FFT in production)
-     */
-    private computeFFT(buffer: Float32Array): Float32Array {
-        const N = buffer.length;
-        const result = new Float32Array(N / 2);
-
-        for (let k = 0; k < N / 2; k++) {
-            let real = 0;
-            let imag = 0;
-            for (let n = 0; n < N; n++) {
-                const angle = (2 * Math.PI * k * n) / N;
-                real += buffer[n] * Math.cos(angle);
-                imag -= buffer[n] * Math.sin(angle);
-            }
-            result[k] = Math.sqrt(real * real + imag * imag);
-        }
-
-        return result;
     }
 
     /**
@@ -365,7 +356,7 @@ class AudioToMidiConverter {
      * Calculate spectral centroid for drum classification
      */
     private calculateSpectralCentroid(buffer: Float32Array, sampleRate: number): number {
-        const fft = this.computeFFT(buffer);
+        const fft = this.getFFT(buffer.length).forward(buffer);
         const binWidth = sampleRate / (buffer.length);
 
         let weightedSum = 0;
