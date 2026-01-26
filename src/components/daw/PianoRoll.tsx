@@ -134,9 +134,9 @@ function PianoRollBase({
         selectedNotes,
         dragMode,
         selectionBox,
-        handleCanvasMouseDown,
-        handleGridMouseMove,
-        handleGridMouseUp,
+        handleMouseDown,
+        handleMouseMove,
+        handleMouseUp,
         handleKeyDown,
         getYFromPitch
     } = interaction;
@@ -376,9 +376,9 @@ function PianoRollBase({
                             selectedNoteIds={selectedNotes}
                             isPlaying={isPlaying}
                             selectionBox={selectionBox}
-                            onMouseDown={handleCanvasMouseDown}
-                            onMouseMove={handleGridMouseMove}
-                            onMouseUp={handleGridMouseUp}
+                            onMouseDown={handleMouseDown}
+                            onMouseMove={handleMouseMove}
+                            onMouseUp={handleMouseUp}
                         />
                     </div>
                 </div>

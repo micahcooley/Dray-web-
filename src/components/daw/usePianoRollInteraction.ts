@@ -32,9 +32,9 @@ export function usePianoRollInteraction({
 }: UsePianoRollInteractionProps) {
     const [selectedNotes, setSelectedNotes] = useState<Set<string>>(new Set());
     const [dragMode, setDragMode] = useState<'move' | 'resize-left' | 'resize-right' | null>(null);
-    const [dragStart, setDragStart] = useState<{ x: number; y: number; notes: MidiNote[] } | null>(null);
+    const [dragStart, setDragStart] = useState<{ worldX: number; worldY: number; notes: MidiNote[] } | null>(null);
     const [selectionBox, setSelectionBox] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
-    const [mouseDownStart, setMouseDownStart] = useState<{ x: number; y: number } | null>(null);
+    const [mouseDownStart, setMouseDownStart] = useState<{ screenX: number; screenY: number; worldX: number; worldY: number } | null>(null);
 
     // Stores the "temporary" notes during a drag operation to avoid React State thrashing
     const interactionNotesRef = useRef<MidiNote[] | null>(null);
@@ -85,16 +85,18 @@ export function usePianoRollInteraction({
     }, [gridSize]);
 
     // Mouse Handlers
-    const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
+    const handleMouseDown = useCallback((e: React.MouseEvent) => {
         e.preventDefault(); // Prevent native drag/select
-        const canvas = e.currentTarget;
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+        const worldWrapper = e.currentTarget;
+        const rect = worldWrapper.getBoundingClientRect();
 
-        // VIRTUALIZATION FIX: Logic uses wrapper-relative coordinate 'x'/'y' which are already World Coordinates.
-        const worldX = x;
-        const worldY = y;
+        // COORDINATE SYSTEM:
+        // The 'worldWrapper' is the scrollable container.
+        // rect.left shifts as we scroll.
+        // Therefore, (clientX - rect.left) provides the World X coordinate directly.
+        // No explicit scrollLeft addition is needed.
+        const worldX = e.clientX - rect.left;
+        const worldY = e.clientY - rect.top;
 
         // Hit Testing using World Coords
         const hitResult = findHitNote(worldX, worldY);
@@ -116,7 +118,7 @@ export function usePianoRollInteraction({
             setSelectedNotes(newSelected);
 
             const draggedNotes = notes.filter(n => newSelected.has(n.id));
-            setDragStart({ x: e.clientX, y: e.clientY, notes: draggedNotes });
+            setDragStart({ worldX, worldY, notes: draggedNotes });
             setMouseDownStart(null); // Clear pending empty click
 
             if (!isPlaying && hitNote) playNotePreview(hitNote.pitch);
@@ -128,26 +130,39 @@ export function usePianoRollInteraction({
                 setMouseDownStart(null);
             } else {
                 // Defer until move or up
-                setMouseDownStart({ x: e.clientX, y: e.clientY }); // Store screen coords for drag threshold
+                // Store both Screen Coords (for threshold) and World Coords (for anchor)
+                setMouseDownStart({
+                    screenX: e.clientX,
+                    screenY: e.clientY,
+                    worldX,
+                    worldY
+                });
                 // Deselect on empty down
                 setSelectedNotes(new Set());
             }
         }
     }, [notes, selectedNotes, isPlaying, playNotePreview, findHitNote]);
 
-    const handleGridMouseMove = useCallback((e: React.MouseEvent) => {
-        const canvas = e.currentTarget;
-        const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
-        const y = e.clientY - rect.top;
+    const handleMouseMove = useCallback((e: React.MouseEvent) => {
+        const worldWrapper = e.currentTarget;
+        const rect = worldWrapper.getBoundingClientRect();
+
+        // Current World Coordinates (robust to scrolling during drag)
+        const currentWorldX = e.clientX - rect.left;
+        const currentWorldY = e.clientY - rect.top;
 
         // Check for drag-select threshold from empty click
         if (mouseDownStart && !selectionBox && !dragMode) {
-            const dist = Math.hypot(e.clientX - mouseDownStart.x, e.clientY - mouseDownStart.y);
+            // Use SCREEN coordinates for threshold check (user intention)
+            const dist = Math.hypot(e.clientX - mouseDownStart.screenX, e.clientY - mouseDownStart.screenY);
             if (dist > 5) {
-                const startWorldX = mouseDownStart.x - rect.left;
-                const startWorldY = mouseDownStart.y - rect.top;
-                setSelectionBox({ x1: startWorldX, y1: startWorldY, x2: x, y2: y });
+                // Start Selection Box anchored at ORIGINAL World Coordinate
+                setSelectionBox({
+                    x1: mouseDownStart.worldX,
+                    y1: mouseDownStart.worldY,
+                    x2: currentWorldX,
+                    y2: currentWorldY
+                });
                 setMouseDownStart(null); // Consumed
                 return;
             }
@@ -155,10 +170,7 @@ export function usePianoRollInteraction({
 
         if (!dragMode && !selectionBox && !mouseDownStart) {
             // Handle Hover Cursor Feedback
-            const worldX = x; // Already relative
-            const worldY = y;
-
-            const hitResult = findHitNote(worldX, worldY);
+            const hitResult = findHitNote(currentWorldX, currentWorldY);
             let cursor = 'default';
             
             if (hitResult) {
@@ -167,17 +179,18 @@ export function usePianoRollInteraction({
                 else cursor = 'move';
             }
             
-            (canvas as HTMLElement).style.cursor = cursor;
+            (worldWrapper as HTMLElement).style.cursor = cursor;
         }
 
         if (selectionBox) { // Selection Box Logic
-            setSelectionBox(prev => prev ? ({ ...prev, x2: x, y2: y }) : null);
+            // Update only the end point (x2, y2)
+            setSelectionBox(prev => prev ? ({ ...prev, x2: currentWorldX, y2: currentWorldY }) : null);
 
             // Collision Detection (O(N) but just math)
-            const boxX = Math.min(selectionBox.x1, x);
-            const boxY = Math.min(selectionBox.y1, y);
-            const boxW = Math.abs(x - selectionBox.x1);
-            const boxH = Math.abs(y - selectionBox.y1);
+            const boxX = Math.min(selectionBox.x1, currentWorldX);
+            const boxY = Math.min(selectionBox.y1, currentWorldY);
+            const boxW = Math.abs(currentWorldX - selectionBox.x1);
+            const boxH = Math.abs(currentWorldY - selectionBox.y1);
 
             const newSelected = new Set<string>();
             if (e.shiftKey) selectedNotes.forEach(id => newSelected.add(id));
@@ -198,9 +211,10 @@ export function usePianoRollInteraction({
 
         if (!dragMode || !dragStart) return;
 
-        // Calculate Deltas for Drag
-        const deltaX = (e.clientX - dragStart.x) / pixelsPerBeat;
-        const pixelDeltaY = e.clientY - dragStart.y;
+        // Calculate Deltas using WORLD coordinates
+        // This ensures dragging works even if the view scrolls
+        const deltaX = (currentWorldX - dragStart.worldX) / pixelsPerBeat;
+        const pixelDeltaY = currentWorldY - dragStart.worldY;
         const pitchDelta = -Math.round(pixelDeltaY / NOTE_HEIGHT);
 
         // Calculate new state but DO NOT COMMIT to store yet
@@ -231,7 +245,7 @@ export function usePianoRollInteraction({
 
     }, [dragMode, dragStart, selectionBox, notes, pixelsPerBeat, gridSize, snap, getYFromPitch, selectedNotes, mouseDownStart, canvasRef, findHitNote]);
 
-    const handleGridMouseUp = useCallback((e: React.MouseEvent) => {
+    const handleMouseUp = useCallback((e: React.MouseEvent) => {
         // Commit logic for Drag
         if (interactionNotesRef.current && dragMode) {
             onNotesChange(interactionNotesRef.current);
@@ -240,12 +254,12 @@ export function usePianoRollInteraction({
         // Deferred Creation Logic (Single Click handling)
         if (mouseDownStart) {
             // We released without dragging far enough -> Treat as Click
-            const canvas = e.currentTarget;
-            const rect = canvas.getBoundingClientRect();
+            // We use the 'Current World' position to ensure note is created under cursor
+            const worldWrapper = e.currentTarget;
+            const rect = worldWrapper.getBoundingClientRect();
 
-            // Use original down coordinates for accuracy
-            const worldX = mouseDownStart.x - rect.left;
-            const worldY = mouseDownStart.y - rect.top;
+            const worldX = e.clientX - rect.left;
+            const worldY = e.clientY - rect.top;
 
             const pitch = getPitchFromY(worldY);
             const start = Math.floor(worldX / pixelsPerBeat / gridSize) * gridSize;
@@ -369,9 +383,9 @@ export function usePianoRollInteraction({
         dragMode,
         dragStart,
         selectionBox,
-        handleCanvasMouseDown,
-        handleGridMouseMove,
-        handleGridMouseUp,
+        handleMouseDown,
+        handleMouseMove,
+        handleMouseUp,
         handleKeyDown,
         getYFromPitch
     };
