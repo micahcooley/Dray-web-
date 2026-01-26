@@ -1424,7 +1424,7 @@ export default function DAWPage() {
             {/* Playhead - uses animated playbackBeat for smooth movement */}
             {/* Playhead - uses animated playbackBeat for smooth movement */}
             <div style={{ position: 'absolute', top: 0, bottom: 0, left: 171, zIndex: 10, pointerEvents: 'none' }}>
-              <MasterPlayhead pixelsPerBeat={PIXELS_PER_BEAT} height={900} scrollLeft={0} />
+              <MasterPlayhead pixelsPerBeat={PIXELS_PER_BEAT} height={900} />
             </div>
           </div>
         </main>
