@@ -32,7 +32,9 @@ export class AudioScheduler {
     }>>();
 
     // Keys for scheduled events (tick-based) to avoid float precision issues
-    private scheduledNotes = new Set<string>();
+    // Optimized: Use nested Maps instead of string keys to reduce GC pressure (Tick -> Track -> NoteID)
+    private scheduledNotes = new Map<number, Map<number, Set<string>>>();
+    private scheduledAudio = new Map<number, Map<number, Set<number>>>();
 
     // Active sample sources for stopping playback (Issue #18)
     private activeSampleSources = new Map<number, AudioBufferSourceNode[]>();
@@ -109,6 +111,7 @@ export class AudioScheduler {
         });
 
         this.scheduledNotes.clear();
+        this.scheduledAudio.clear();
         this.cacheInstruments(store.tracks);
 
         const bpm = this.tempoCache;
@@ -217,11 +220,13 @@ export class AudioScheduler {
                 this.current16thNote = this.scopedLoopStart * 4;
                 // We must clear scheduled notes so they can play again
                 this.scheduledNotes.clear();
+                this.scheduledAudio.clear();
             } else {
                 // Main loop - infinite scroll or loop back?
                 // Current behavior was: reset to 0
                 this.current16thNote = 0;
                 this.scheduledNotes.clear();
+                this.scheduledAudio.clear();
                 // Note: we should probably reset startTime here to keep numbers sane?
                 // But nextNoteTime must remain linear for AudioContext.
                 // So we just wrap the index.
@@ -385,6 +390,7 @@ export class AudioScheduler {
         }
 
         this.scheduledNotes.clear();
+        this.scheduledAudio.clear();
 
         // Release engines if needed, or just stop sounds
         try {
@@ -456,9 +462,14 @@ export class AudioScheduler {
             for (let i = 0; i < this.scopedNotes.length; i++) {
                 const note = this.scopedNotes[i];
                 if (Math.abs(note.start - beatWithinClip) < 0.01) {
-                    const key = `${beatNumber}:${this.scopedTrackId}:${note.id}`;
-                    if (!this.scheduledNotes.has(key)) {
-                        this.scheduledNotes.add(key);
+                    // Optimized: Nested Map check for scoped notes
+                    let tickMap = this.scheduledNotes.get(beatNumber);
+                    if (!tickMap) { tickMap = new Map(); this.scheduledNotes.set(beatNumber, tickMap); }
+                    let trackSet = tickMap.get(this.scopedTrackId);
+                    if (!trackSet) { trackSet = new Set(); tickMap.set(this.scopedTrackId, trackSet); }
+
+                    if (!trackSet.has(note.id)) {
+                        trackSet.add(note.id);
                         const trackFake = { id: this.scopedTrackId, type: this.scopedTrackType, instrument: this.scopedInstrument } as any;
                         const durationSec = note.duration * (60 / (useProjectStore.getState().activeProject?.tempo || 120));
                         this.triggerNote(trackFake, note, this.scopedInstrument || undefined, time, durationSec);
@@ -475,6 +486,10 @@ export class AudioScheduler {
         const currentBeat = beatNumber * stepSize;
         const tickIndex = beatNumber;
 
+        // Hoist tick map retrieval out of loops?
+        // No, because we might not have any notes to schedule, and we don't want to create maps unnecessarily.
+        // We will do it lazily inside the match block.
+
         for (let tI = 0; tI < tracks.length; tI++) {
             const track = tracks[tI];
             if (track.muted) continue;
@@ -488,9 +503,14 @@ export class AudioScheduler {
                     const audioUrl = (clip as any).audioUrl;
                     if (!audioUrl) continue;
                     if (Math.abs(clipStartBeat - currentBeat) < stepSize) {
-                        const clipKey = `${tickIndex}:audio:${track.id}:${clipStartBeat}`;
-                        if (!this.scheduledNotes.has(clipKey)) {
-                            this.scheduledNotes.add(clipKey);
+                        // Optimized: Nested Map check for audio
+                        let tickMap = this.scheduledAudio.get(tickIndex);
+                        if (!tickMap) { tickMap = new Map(); this.scheduledAudio.set(tickIndex, tickMap); }
+                        let trackSet = tickMap.get(track.id);
+                        if (!trackSet) { trackSet = new Set(); tickMap.set(track.id, trackSet); }
+
+                        if (!trackSet.has(clipStartBeat)) {
+                            trackSet.add(clipStartBeat);
                             const preciseTime = time + (clipStartBeat - currentBeat) * secondsPerBeat;
                             this.triggerAudio(audioUrl, preciseTime, track.volume, track.pan, (clip as any).pitch || 0, track.id);
                         }
@@ -510,10 +530,15 @@ export class AudioScheduler {
                     }
 
                     if (noteDiff >= 0 && noteDiff < stepSize) {
-                        const key = `${tickIndex}:${track.id}:${note.id}`;
-                        if (!this.scheduledNotes.has(key)) {
+                        // Optimized: Nested Map check for notes
+                        let tickMap = this.scheduledNotes.get(tickIndex);
+                        if (!tickMap) { tickMap = new Map(); this.scheduledNotes.set(tickIndex, tickMap); }
+                        let trackSet = tickMap.get(track.id);
+                        if (!trackSet) { trackSet = new Set(); tickMap.set(track.id, trackSet); }
+
+                        if (!trackSet.has(note.id)) {
                             console.log(`[AudioScheduler] Scheduled Note! Track ${track.id} Pitch ${note.pitch} @ ${time.toFixed(3)}s`);
-                            this.scheduledNotes.add(key);
+                            trackSet.add(note.id);
                             const noteTimeOffset = noteDiff * secondsPerBeat;
                             const preciseTime = time + noteTimeOffset;
                             const noteDurationSec = note.duration * secondsPerBeat;
@@ -524,7 +549,8 @@ export class AudioScheduler {
             }
         }
 
-        if (this.scheduledNotes.size > 20000) this.scheduledNotes.clear();
+        if (this.scheduledNotes.size > 2000) this.scheduledNotes.clear();
+        if (this.scheduledAudio.size > 2000) this.scheduledAudio.clear();
     }
 
     /**
@@ -708,6 +734,7 @@ export class AudioScheduler {
         this.onProgressCallbacks.forEach(cb => cb(timeInSeconds, currentBeat * 4));
 
         this.scheduledNotes.clear();
+        this.scheduledAudio.clear();
     }
 
     public updateInstrumentCache(trackId: number, instrument: string) {
