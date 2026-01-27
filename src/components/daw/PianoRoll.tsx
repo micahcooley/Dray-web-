@@ -70,6 +70,7 @@ function PianoRollBase({
     const [showGridMenu, setShowGridMenu] = useState(false);
 
     const scrollContainerRef = useRef<HTMLDivElement>(null);
+    const sidebarScrollRef = useRef<HTMLDivElement>(null);
     const containerRef = useRef<HTMLDivElement>(null);
     const canvasRef = useRef<PianoRollCanvasHandle>(null);
     const lastPreviewPitch = useRef<number | null>(null);
@@ -199,22 +200,6 @@ function PianoRollBase({
         }
     }, [isPlaying, storeTogglePlay, setCurrentTime, notes]);
 
-    // Sync sidebar scroll with grid scroll
-    useEffect(() => {
-        const scrollContainer = scrollContainerRef.current;
-        if (!scrollContainer) return;
-
-        const handleScroll = () => {
-            const sidebarScroll = document.querySelector(`.${styles.sidebarScroll}`) as HTMLElement;
-            if (sidebarScroll) {
-                sidebarScroll.style.transform = `translateY(${-scrollContainer.scrollTop}px)`;
-            }
-        };
-
-        scrollContainer.addEventListener('scroll', handleScroll);
-        return () => scrollContainer.removeEventListener('scroll', handleScroll);
-    }, []);
-
     // Initialize audio engine and scroll position
     useEffect(() => {
         const timer = setTimeout(() => {
@@ -336,7 +321,7 @@ function PianoRollBase({
                 <div className={styles.prMain}>
                     {/* Key Sidebar */}
                     <div className={styles.prSidebar} style={{ width: SIDEBAR_WIDTH }}>
-                        <div className={styles.sidebarScroll}>
+                        <div ref={sidebarScrollRef} className={styles.sidebarScroll}>
                             {visiblePitches.map((pitch) => {
                                 const name = getNoteName(pitch);
                                 const isC = name.startsWith('C') && !name.includes('#');
@@ -359,8 +344,9 @@ function PianoRollBase({
                         ref={scrollContainerRef}
                         className={styles.prViewport}
                         onScroll={(e) => {
-                            const sidebarScroll = document.querySelector(`.${styles.sidebarScroll}`) as HTMLElement;
-                            if (sidebarScroll) sidebarScroll.style.transform = `translateY(${-e.currentTarget.scrollTop}px)`;
+                            if (sidebarScrollRef.current) {
+                                sidebarScrollRef.current.style.transform = `translateY(${-e.currentTarget.scrollTop}px)`;
+                            }
                         }}
                     >
                         <PianoRollCanvas
