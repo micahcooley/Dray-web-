@@ -1,7 +1,7 @@
 'use client';
 
-import React from 'react';
-import { usePlaybackTime } from '../../hooks/usePlaybackTime';
+import React, { useRef, useEffect } from 'react';
+import { usePlaybackCallback, getPlaybackTime } from '../../hooks/usePlaybackTime';
 
 const formatTime = (seconds: number) => {
     const mins = Math.floor(seconds / 60);
@@ -11,6 +11,21 @@ const formatTime = (seconds: number) => {
 };
 
 export default function TimeDisplay() {
-    const currentTime = usePlaybackTime();
-    return <span className="time">{formatTime(currentTime)}</span>;
+    const timeRef = useRef<HTMLSpanElement>(null);
+
+    // Optimize: Update DOM directly to avoid 60fps React re-renders
+    usePlaybackCallback((time) => {
+        if (timeRef.current) {
+            timeRef.current.textContent = formatTime(time);
+        }
+    });
+
+    // Set initial value on mount
+    useEffect(() => {
+        if (timeRef.current) {
+            timeRef.current.textContent = formatTime(getPlaybackTime());
+        }
+    }, []);
+
+    return <span className="time" ref={timeRef}>00:00:000</span>;
 }
