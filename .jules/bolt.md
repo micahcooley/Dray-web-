@@ -1,0 +1,3 @@
+## 2026-02-03 - React Style Prop Conflict with Direct DOM Manipulation
+**Learning:** When optimizing high-frequency animations (like volume meters) by using `useRef` and direct DOM manipulation (e.g., `ref.current.style.width = ...`), you must ensure the manipulated property is NOT present in the component's JSX `style` prop. If it is, React's reconciliation process will overwrite your manual updates with the value from the `style` prop whenever the component re-renders (e.g., due to unrelated prop changes), causing flickering or reset of the animation.
+**Action:** Remove the animated property from the JSX `style` object and initialize it via the ref or `useEffect` instead.
