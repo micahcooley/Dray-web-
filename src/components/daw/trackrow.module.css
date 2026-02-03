@@ -1,0 +1,169 @@
+.trackLane {
+  display: flex;
+  height: 80px;
+  flex-shrink: 0;
+  border-bottom: 1px solid #0c0c12;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.trackLane:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.trackLane.selected {
+  background: rgba(88, 101, 242, 0.08);
+}
+
+.trackLane.muted {
+  opacity: 0.4;
+}
+
+.trackLane.greyed {
+  opacity: 0.35;
+  filter: saturate(0.3);
+}
+
+.trackLane.dragging {
+  opacity: 0.5;
+  background: rgba(88, 101, 242, 0.1);
+}
+
+.trackLane.dropTarget {
+  border-top: 2px solid #5865f2;
+  background: rgba(88, 101, 242, 0.08);
+}
+
+.trackHeader {
+  width: 170px;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0 0.6rem;
+  background: var(--bg-surface);
+  border-right: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+
+.trackColor {
+  width: 3px;
+  height: 32px;
+  border-radius: 2px;
+}
+
+.trackInfo {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.trackRow1 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.trackName {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trackInstrument {
+  display: block;
+  font-size: 0.5rem;
+  color: #555;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.trackControls {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.trackBtn {
+  width: 18px;
+  height: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--border-subtle);
+  border: none;
+  color: var(--text-dim);
+  font-size: 0.5rem;
+  font-weight: 700;
+  border-radius: 3px;
+  cursor: pointer;
+}
+
+.trackBtn:hover {
+  color: white;
+}
+
+.trackBtn.active {
+  background: #ff4d4d;
+  color: white;
+}
+
+.trackBtn.active.solo {
+  background: #fee75c;
+  color: #000;
+}
+
+.trackRow2 {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+
+.trackContent {
+  flex: 1;
+  position: relative;
+  min-height: 80px;
+}
+
+.clip {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  border-radius: 4px;
+  border-left: 3px solid;
+  cursor: pointer;
+}
+
+.clip:hover {
+  filter: brightness(1.15);
+}
+
+.clipName {
+  position: absolute;
+  top: 3px;
+  left: 6px;
+  font-size: 0.5rem;
+  color: rgba(255, 255, 255, 0.8);
+  font-weight: 600;
+  z-index: 1;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
+}
+
+.clipNotes,
+.clipWaveform {
+  position: absolute;
+  top: 14px;
+  left: 3px;
+  right: 3px;
+  bottom: 3px;
+  width: calc(100% - 6px);
+  height: calc(100% - 17px);
+  overflow: hidden;
+}
