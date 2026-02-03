@@ -366,16 +366,20 @@ class StemSeparator {
      */
     extractPeaks(buffer: AudioBuffer, length: number = 100): number[] {
         const data = buffer.getChannelData(0); // Use left channel
-        const step = Math.floor(data.length / length);
+        const windowSize = Math.floor(data.length / length);
         const peaks: number[] = [];
+
+        // Optimization: Skip samples for large windows to maintain UI responsiveness
+        // Adaptive step: check every Nth sample, maxing out at ~64 checks per window
+        const scanStep = Math.max(1, Math.floor(windowSize / 64));
 
         for (let i = 0; i < length; i++) {
             let max = 0;
             // Scan window for peak amplitude
-            const start = i * step;
-            const end = Math.min(start + step, data.length);
+            const start = i * windowSize;
+            const end = Math.min(start + windowSize, data.length);
 
-            for (let j = start; j < end; j++) {
+            for (let j = start; j < end; j += scanStep) {
                 const val = Math.abs(data[j]);
                 if (val > max) max = val;
             }
