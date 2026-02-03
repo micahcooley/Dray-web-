@@ -5,9 +5,6 @@ export async function POST(request: Request) {
         const data = await request.json();
         const { type, prompt } = data;
 
-        // Simulate quick AI generation
-        await new Promise(resolve => setTimeout(resolve, 800));
-
         let response;
         if (type === 'create-track') {
             response = {
@@ -30,7 +27,7 @@ export async function POST(request: Request) {
         }
 
         return NextResponse.json(response);
-    } catch (error) {
+    } catch {
         return NextResponse.json({ error: 'Failed to process preview' }, { status: 500 });
     }
 }
