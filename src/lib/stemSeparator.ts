@@ -305,60 +305,60 @@ class StemSeparator {
 
     /**
      * Convert AudioBuffer to WAV Blob for download/playback
+     * Offloaded to Web Worker to prevent UI blocking
      */
-    audioBufferToWav(buffer: AudioBuffer): Blob {
+    async audioBufferToWav(buffer: AudioBuffer): Promise<Blob> {
+        const start = performance.now();
+
+        // 1. Prepare data on Main Thread
         const numChannels = buffer.numberOfChannels;
-        const sampleRate = buffer.sampleRate;
-        const format = 1; // PCM
-        const bitDepth = 16;
-
-        const bytesPerSample = bitDepth / 8;
-        const blockAlign = numChannels * bytesPerSample;
-
-        const dataLength = buffer.length * blockAlign;
-        const bufferLength = 44 + dataLength;
-
-        const arrayBuffer = new ArrayBuffer(bufferLength);
-        const view = new DataView(arrayBuffer);
-
-        // WAV header
-        this.writeString(view, 0, 'RIFF');
-        view.setUint32(4, bufferLength - 8, true);
-        this.writeString(view, 8, 'WAVE');
-        this.writeString(view, 12, 'fmt ');
-        view.setUint32(16, 16, true); // fmt chunk size
-        view.setUint16(20, format, true);
-        view.setUint16(22, numChannels, true);
-        view.setUint32(24, sampleRate, true);
-        view.setUint32(28, sampleRate * blockAlign, true);
-        view.setUint16(32, blockAlign, true);
-        view.setUint16(34, bitDepth, true);
-        this.writeString(view, 36, 'data');
-        view.setUint32(40, dataLength, true);
-
-        // Interleave channels and convert to 16-bit PCM
         const channels: Float32Array[] = [];
+        const transferList: Transferable[] = [];
+
         for (let c = 0; c < numChannels; c++) {
-            channels.push(buffer.getChannelData(c));
+            // We must copy the channel data because the AudioBuffer's internal data
+            // is often a view that shouldn't be neutered, OR we just want to be safe.
+            // .slice() creates a copy.
+            const data = buffer.getChannelData(c);
+            const copy = new Float32Array(data.length);
+            copy.set(data);
+            channels.push(copy);
+            transferList.push(copy.buffer);
         }
 
-        let offset = 44;
-        for (let i = 0; i < buffer.length; i++) {
-            for (let c = 0; c < numChannels; c++) {
-                const sample = Math.max(-1, Math.min(1, channels[c][i]));
-                const int16 = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-                view.setInt16(offset, int16, true);
-                offset += 2;
-            }
-        }
+        const prepTime = performance.now() - start;
 
-        return new Blob([arrayBuffer], { type: 'audio/wav' });
-    }
+        // 2. Encode in Worker
+        return new Promise((resolve, reject) => {
+             const worker = new Worker(new URL('./worker/wavEncoder.worker.ts', import.meta.url));
 
-    private writeString(view: DataView, offset: number, string: string) {
-        for (let i = 0; i < string.length; i++) {
-            view.setUint8(offset + i, string.charCodeAt(i));
-        }
+             worker.onmessage = (e) => {
+                 const workerEnd = performance.now();
+                 const encodeTime = workerEnd - (start + prepTime);
+                 const totalTime = workerEnd - start;
+
+                 console.log(`[WAV Encode] Prep: ${prepTime.toFixed(2)}ms, Worker: ${encodeTime.toFixed(2)}ms, Total: ${totalTime.toFixed(2)}ms`);
+
+                 if (e.data.error) {
+                     reject(new Error(e.data.error));
+                 } else {
+                     const blob = new Blob([e.data.wavBuffer], { type: 'audio/wav' });
+                     resolve(blob);
+                 }
+                 worker.terminate();
+             };
+
+             worker.onerror = (err) => {
+                 console.error('Worker error:', err);
+                 reject(err);
+                 worker.terminate();
+             };
+
+             worker.postMessage({
+                 channels,
+                 sampleRate: buffer.sampleRate
+             }, transferList);
+        });
     }
 
     /**

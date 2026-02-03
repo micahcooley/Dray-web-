@@ -72,29 +72,36 @@ export default function StemSeparatorUI({ onClose }: StemSeparatorProps) {
             const result = await stemSeparator.separate(file, setProgress);
 
             // Convert buffers to blobs for download
+            const [bassBlob, drumsBlob, vocalsBlob, otherBlob] = await Promise.all([
+                stemSeparator.audioBufferToWav(result.bass),
+                stemSeparator.audioBufferToWav(result.drums),
+                stemSeparator.audioBufferToWav(result.vocals),
+                stemSeparator.audioBufferToWav(result.other)
+            ]);
+
             setStems({
                 bass: {
                     type: 'bass',
                     buffer: result.bass,
-                    blob: stemSeparator.audioBufferToWav(result.bass),
+                    blob: bassBlob,
                     isPlaying: false
                 },
                 drums: {
                     type: 'drums',
                     buffer: result.drums,
-                    blob: stemSeparator.audioBufferToWav(result.drums),
+                    blob: drumsBlob,
                     isPlaying: false
                 },
                 vocals: {
                     type: 'vocals',
                     buffer: result.vocals,
-                    blob: stemSeparator.audioBufferToWav(result.vocals),
+                    blob: vocalsBlob,
                     isPlaying: false
                 },
                 other: {
                     type: 'other',
                     buffer: result.other,
-                    blob: stemSeparator.audioBufferToWav(result.other),
+                    blob: otherBlob,
                     isPlaying: false
                 }
             });
