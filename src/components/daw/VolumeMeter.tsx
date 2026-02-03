@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef } from 'react';
 import { audioEngine } from '../../lib/audioEngine';
 
 interface VolumeMeterProps {
@@ -18,7 +18,7 @@ export default function VolumeMeter({
     isPlaying,
     isMuted
 }: VolumeMeterProps) {
-    const [meterLevel, setMeterLevel] = useState(0);
+    const meterFillRef = useRef<HTMLDivElement>(null);
 
     // Sync volume with audio engine on mount/update
     useEffect(() => {
@@ -29,7 +29,9 @@ export default function VolumeMeter({
     // Animate audio level during playback (throttled to 30fps for performance)
     useEffect(() => {
         if (!isPlaying || isMuted) {
-            setMeterLevel(0);
+            if (meterFillRef.current) {
+                meterFillRef.current.style.width = '0%';
+            }
             return;
         }
 
@@ -43,7 +45,12 @@ export default function VolumeMeter({
                 const levels = audioEngine.getTrackLevels();
                 // Default to 0 if track not initializing yet
                 const level = levels[trackId] || 0;
-                setMeterLevel(level);
+
+                if (meterFillRef.current) {
+                    const meterWidthPercent = Math.max(0, Math.min(100, level * 100));
+                    meterFillRef.current.style.width = `${meterWidthPercent}%`;
+                }
+
                 lastTime = currentTime;
             }
 
@@ -63,24 +70,12 @@ export default function VolumeMeter({
         onVolumeChange(newVal);
     };
 
-    // Helper to get color for current level
-    const getLevelColor = (level: number) => {
-        if (level > 0.9) return '#ff4d4d'; // Red
-        if (level > 0.7) return '#ffcc00'; // Yellow
-        return '#4caf50'; // Green
-    };
-
     // Convert linear 0-1 to dB approximation for display
     const getDbValue = (val: number) => {
         if (val <= 0.01) return '-∞';
         const db = 20 * Math.log10(val);
         return db > 0 ? `+${db.toFixed(1)}` : db.toFixed(1);
     };
-
-    // If playing, we show the meter level, else the fader position volume 
-    // (Actually Logic shows meter even when not playing logic IF receiving input, but here we only have input during playback usually)
-    const displayLevel = (isPlaying && !isMuted) ? meterLevel : 0;
-    const meterWidthPercent = Math.max(0, Math.min(100, displayLevel * 100));
 
     return (
         <div
@@ -109,16 +104,19 @@ export default function VolumeMeter({
             }}>
 
                 {/* Smooth Gradient Meter Bar (Behind the thumb) */}
-                <div style={{
-                    position: 'absolute',
-                    top: 0,
-                    left: 0,
-                    bottom: 0,
-                    width: `${meterWidthPercent}%`,
-                    background: 'linear-gradient(90deg, #4caf50 0%, #8bc34a 60%, #ffeb3b 80%, #f44336 100%)',
-                    opacity: 0.8,
-                    transition: isPlaying ? 'width 0.04s' : 'width 0.2s',
-                }} />
+                <div
+                    ref={meterFillRef}
+                    style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        bottom: 0,
+                        // width is controlled by ref to prevent React thrashing
+                        background: 'linear-gradient(90deg, #4caf50 0%, #8bc34a 60%, #ffeb3b 80%, #f44336 100%)',
+                        opacity: 0.8,
+                        transition: isPlaying ? 'width 0.04s' : 'width 0.2s',
+                    }}
+                />
 
                 {/* The Slider Input */}
                 <input
