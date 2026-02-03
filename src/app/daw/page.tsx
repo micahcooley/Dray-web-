@@ -621,7 +621,7 @@ export default function DAWPage() {
                   osc2.stop(now + duration);
 
                   const buffer = await offlineCtx.startRendering();
-                  const wavBlob = stemSeparator.audioBufferToWav(buffer);
+                  const wavBlob = await stemSeparator.audioBufferToWav(buffer);
                   const url = URL.createObjectURL(wavBlob);
 
                   // Find or create Audio track
