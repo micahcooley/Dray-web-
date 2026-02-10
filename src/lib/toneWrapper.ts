@@ -11,3 +11,7 @@ export async function ensureTone(): Promise<ToneLibType> {
     }
     return _tone as ToneLibType;
 }
+
+export function getToneSync(): ToneLibType | null {
+    return _tone as ToneLibType;
+}

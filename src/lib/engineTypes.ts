@@ -5,8 +5,8 @@ export interface BaseEngineInterface {
 }
 
 export interface SynthEngineInterface extends BaseEngineInterface {
-  playNote(trackId: number, preset: string, note: number | string, duration?: string | number, velocity?: number, time?: number): Promise<void>;
-  playChord(trackId: number, preset: string, notes?: (number | string)[], duration?: string | number, velocity?: number): Promise<void>;
+  playNote(trackId: number, preset: string, note: number | string, duration?: string | number, velocity?: number, time?: number): void | Promise<void>;
+  playChord(trackId: number, preset: string, notes?: (number | string)[], duration?: string | number, velocity?: number): void | Promise<void>;
   panic?(): void;
   dispose(): void;
 }

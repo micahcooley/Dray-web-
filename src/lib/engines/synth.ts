@@ -1,4 +1,4 @@
-import { ensureTone } from '../toneWrapper';
+import { ensureTone, getToneSync } from '../toneWrapper';
 import type { ToneLibType } from '../toneWrapper';
 import { audioEngine } from '../audioEngine';
 import { globalReverbs } from './globalReverb';
@@ -623,22 +623,40 @@ class ToneSynthEngine {
     /**
      * Play a chord (multiple notes simultaneously)
      */
-    async playChord(trackId: number, preset: string, notes: (number | string)[], duration: string | number, velocity: number, time?: number) {
-        const ToneLib = await ensureTone() as ToneLibType;
+    playChord(trackId: number, preset: string, notes: (number | string)[], duration: string | number, velocity: number, time?: number): void | Promise<void> {
+        const ToneLibSync = getToneSync();
         const key = `${trackId}-${preset}`;
 
-        // Get or create the synth
-        const bundle = await this.getSynth(trackId, preset);
-
-        try {
-            // Convert MIDI notes to frequencies if they are numbers
-            const freqs = notes.map(n =>
-                typeof n === 'number' ? new (ToneLib.Frequency as any)(n, "midi").toFrequency() : n
-            );
-            bundle.synth.triggerAttackRelease(freqs, duration, time, velocity);
-        } catch (e) {
-            console.error("Error playing chord:", e);
+        // FAST PATH: Synth already cached & Tone loaded - execute immediately (synchronous)
+        if (this.initialized && ToneLibSync && this.trackSynths.has(key)) {
+            try {
+                const bundle = this.trackSynths.get(key);
+                const freqs = notes.map(n =>
+                    typeof n === 'number' ? new (ToneLibSync.Frequency as any)(n, "midi").toFrequency() : n
+                );
+                bundle.synth.triggerAttackRelease(freqs, duration, time, velocity);
+            } catch (e) {
+                console.error("Error playing chord (sync):", e);
+            }
+            return;
         }
+
+        // SLOW PATH: Async initialization required
+        return (async () => {
+            try {
+                const ToneLib = await ensureTone() as ToneLibType;
+                // Get or create the synth
+                const bundle = await this.getSynth(trackId, preset);
+
+                // Convert MIDI notes to frequencies if they are numbers
+                const freqs = notes.map(n =>
+                    typeof n === 'number' ? new (ToneLib.Frequency as any)(n, "midi").toFrequency() : n
+                );
+                bundle.synth.triggerAttackRelease(freqs, duration, time, velocity);
+            } catch (e) {
+                console.error("Error playing chord (async):", e);
+            }
+        })();
     }
 
     stopAll() {
