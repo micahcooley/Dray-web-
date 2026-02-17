@@ -1,16 +1,29 @@
 'use client';
 
-import React from 'react';
-import { usePlaybackTime } from '../../hooks/usePlaybackTime';
+import React, { useRef } from 'react';
+import { usePlaybackCallback, getPlaybackTime } from '../../hooks/usePlaybackTime';
+import { formatTime } from '../../lib/formatUtils';
 
-const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    const ms = Math.floor((seconds % 1) * 1000);
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${ms.toString().padStart(3, '0')}`;
-};
+interface TimeDisplayProps {
+    className?: string;
+}
 
-export default function TimeDisplay() {
-    const currentTime = usePlaybackTime();
-    return <span className="time">{formatTime(currentTime)}</span>;
+/**
+ * Optimized time display component that updates via direct DOM manipulation
+ * during playback to avoid React re-renders for the entire component tree.
+ */
+export default function TimeDisplay({ className = "time" }: TimeDisplayProps) {
+    const timeRef = useRef<HTMLSpanElement>(null);
+
+    usePlaybackCallback((time) => {
+        if (timeRef.current) {
+            timeRef.current.textContent = formatTime(time);
+        }
+    });
+
+    return (
+        <span ref={timeRef} className={className}>
+            {formatTime(getPlaybackTime())}
+        </span>
+    );
 }

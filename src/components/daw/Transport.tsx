@@ -7,7 +7,7 @@ import {
 import { useProjectStore } from '../../store/useProjectStore';
 import { audioEngine } from '../../lib/audioEngine';
 import { audioScheduler } from '../../lib/scheduler';
-import { usePlaybackTime } from '../../hooks/usePlaybackTime';
+import TimeDisplay from './TimeDisplay';
 import type { Project } from '../../lib/types';
 import styles from './transport.module.css';
 
@@ -15,17 +15,8 @@ interface TransportProps {
     project: Project | null;
 }
 
-function formatTime(seconds: number): string {
-    if (!isFinite(seconds) || seconds < 0) seconds = 0;
-    const mins = Math.floor(seconds / 60);
-    const secs = Math.floor(seconds % 60);
-    const ms = Math.floor((seconds % 1) * 1000);
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}:${ms.toString().padStart(3, '0')}`;
-}
-
 export default function Transport({ project }: TransportProps) {
     const { isPlaying, togglePlay: storeTogglePlay } = useProjectStore();
-    const currentTime = usePlaybackTime();
 
     const handleTogglePlay = async () => {
         try {
@@ -89,7 +80,7 @@ export default function Transport({ project }: TransportProps) {
                     <Circle size={16} />
                 </button>
                 <div className={styles.timeDisplay}>
-                    <span className={styles.time}>{formatTime(currentTime)}</span>
+                    <TimeDisplay className={styles.time} />
                 </div>
 
                 <div className={styles.tempoDisplay}>
