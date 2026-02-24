@@ -24,6 +24,7 @@ import TimeDisplay from '../../components/daw/TimeDisplay';
 import SettingsModal from '../../components/daw/SettingsModal';
 import WingmanPanel from '../../components/daw/WingmanPanel';
 import SynthEditorPanel from '../../components/daw/SynthEditorPanel';
+import TrackLane from '../../components/daw/TrackLane';
 import { getProjectContext, parseWingmanResponse } from '../../lib/wingmanBridge';
 import { stemSeparator } from '../../lib/stemSeparator';
 import MasterPlayhead from '../../components/daw/MasterPlayhead';
@@ -162,6 +163,11 @@ export default function DAWPage() {
     lastAction,
     historyLength
   } = useHistory<Track[]>(INITIAL_TRACKS);
+
+  const tracksRef = useRef(tracks);
+  useEffect(() => {
+    tracksRef.current = tracks;
+  }, [tracks]);
 
   const [isHydrated, setIsHydrated] = useState(false);
 
@@ -731,17 +737,17 @@ export default function DAWPage() {
     setWingmanInput(prompts[type] || '');
   };
 
-  const handleTrackVolumeChange = (trackId: number, volume: number) => {
+  const handleTrackVolumeChange = useCallback((trackId: number, volume: number) => {
     setTracks(prev => prev.map(t =>
       t.id === trackId ? { ...t, volume, meterL: volume * 85, meterR: volume * 80 } : t
     ));
-  };
+  }, [setTracks]);
 
-  const handleTrackMute = (trackId: number) => {
+  const handleTrackMute = useCallback((trackId: number) => {
     setTracks(prev => prev.map(t => t.id === trackId ? { ...t, muted: !t.muted } : t));
-  };
+  }, [setTracks]);
 
-  const handleTrackSolo = (trackId: number, shiftKey: boolean = false) => {
+  const handleTrackSolo = useCallback((trackId: number, shiftKey: boolean = false) => {
     setTracks(prev => {
       const currentTrack = prev.find(t => t.id === trackId);
       const newSoloState = !currentTrack?.soloed;
@@ -754,17 +760,21 @@ export default function DAWPage() {
         return prev.map(t => t.id === trackId ? { ...t, soloed: newSoloState } : { ...t, soloed: false });
       }
     });
-  };
+  }, [setTracks]);
 
-  const handleSelectTrack = (trackId: number) => {
+  const handleTrackPanChange = useCallback((trackId: number, pan: number) => {
+    setTracks(prev => prev.map(t => t.id === trackId ? { ...t, pan } : t));
+  }, [setTracks]);
+
+  const handleSelectTrack = useCallback((trackId: number) => {
     setSelectedTrackId(trackId);
-  };
+  }, []);
 
   // Context menu handlers
-  const handleTrackContextMenu = (e: React.MouseEvent, trackId: number) => {
+  const handleTrackContextMenu = useCallback((e: React.MouseEvent, trackId: number) => {
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY, trackId });
-  };
+  }, []);
 
   const closeContextMenu = () => setContextMenu(null);
 
@@ -852,31 +862,31 @@ export default function DAWPage() {
     }
   }, []);
 
-  const handleDragStart = (e: React.DragEvent, trackId: number) => {
-
+  const handleDragStart = useCallback((e: React.DragEvent, trackId: number) => {
     setDraggedTrackId(trackId);
     e.dataTransfer.effectAllowed = 'move';
-  };
+  }, []);
 
-  const handleDragOver = (e: React.DragEvent, trackId: number) => {
+  const handleDragOver = useCallback((e: React.DragEvent, trackId: number) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = 'move';
     if (draggedTrackId !== null && draggedTrackId !== trackId) {
       setDropTargetId(trackId);
     }
-  };
+  }, [draggedTrackId]);
 
-  const handleDragLeave = () => {
+  const handleDragLeave = useCallback(() => {
     setDropTargetId(null);
-  };
+  }, []);
 
-  const handleDrop = (e: React.DragEvent, targetTrackId: number) => {
+  const handleDrop = useCallback((e: React.DragEvent, targetTrackId: number) => {
     e.preventDefault();
     setDropTargetId(null);
 
     // Check if files were dropped (audio file for conversion)
     if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
       const file = e.dataTransfer.files[0];
+      const tracks = tracksRef.current;
       const targetTrack = tracks.find(t => t.id === targetTrackId);
 
       // Audio file dropped on MIDI track - offer conversion
@@ -911,9 +921,9 @@ export default function DAWPage() {
     }, 'Reorder tracks');
 
     setDraggedTrackId(null);
-  };
+  }, [draggedTrackId, setTracks]);
 
-  const handleDragEnd = () => setDraggedTrackId(null);
+  const handleDragEnd = useCallback(() => setDraggedTrackId(null), []);
 
   // Play preview sound using Tone.js engines for professional quality
   const playPreviewSound = async (category: SoundCategory, sound: string) => {
@@ -1289,121 +1299,28 @@ export default function DAWPage() {
               ))}
             </div>
             {tracks.map(track => (
-              <div
+              <TrackLane
                 key={track.id}
-                className={`track-lane ${track.muted ? 'muted' : ''} ${selectedTrackId === track.id ? 'selected' : ''} ${tracks.some(t => t.soloed) && !track.soloed ? 'greyed' : ''} ${draggedTrackId === track.id ? 'dragging' : ''} ${dropTargetId === track.id ? 'drop-target' : ''}`}
-                onClick={() => handleSelectTrack(track.id)}
-                onDoubleClick={() => setEditingTrackId(track.id)}
-                onContextMenu={(e) => handleTrackContextMenu(e, track.id)}
-                draggable
-                onDragStart={(e) => handleDragStart(e, track.id)}
-                onDragOver={(e) => handleDragOver(e, track.id)}
+                track={track}
+                selectedTrackId={selectedTrackId}
+                isAnyTrackSoloed={tracks.some(t => t.soloed)}
+                draggedTrackId={draggedTrackId}
+                dropTargetId={dropTargetId}
+                isPlaying={isPlaying}
+                pixelsPerBeat={PIXELS_PER_BEAT}
+                onSelectTrack={handleSelectTrack}
+                onEditTrack={setEditingTrackId}
+                onTrackContextMenu={handleTrackContextMenu}
+                onTrackMute={handleTrackMute}
+                onTrackSolo={handleTrackSolo}
+                onTrackVolumeChange={handleTrackVolumeChange}
+                onTrackPanChange={handleTrackPanChange}
+                onDragStart={handleDragStart}
+                onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
-                onDrop={(e) => handleDrop(e, track.id)}
+                onDrop={handleDrop}
                 onDragEnd={handleDragEnd}
-              >
-                <div className="track-header">
-                  <div className="track-color" style={{ backgroundColor: track.color }}></div>
-                  <div className="track-info">
-                    <div className="track-row-1" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                      <span className="track-name" title={track.name}>{track.name}</span>
-                      <div className="track-controls">
-                        <button className={`track-btn ${track.muted ? 'active' : ''}`} onClick={e => { e.stopPropagation(); handleTrackMute(track.id); }}>M</button>
-                        <button className={`track-btn ${track.soloed ? 'active solo' : ''}`} onClick={e => { e.stopPropagation(); handleTrackSolo(track.id, e.shiftKey); }} title="Click to solo, Shift+click for multi-solo">S</button>
-                      </div>
-                    </div>
-                    <div className="track-row-2" style={{ display: 'flex', gap: '4px', alignItems: 'center' }}>
-                      {/* Real-time volume meter with level display */}
-                      <VolumeMeter
-                        trackId={track.id}
-                        volume={track.volume}
-                        onVolumeChange={(vol) => handleTrackVolumeChange(track.id, vol)}
-                        isPlaying={isPlaying}
-                        isMuted={track.muted}
-                      />
-                      {/* Pan knob */}
-                      <PanKnob
-                        value={track.pan}
-                        size={20}
-                        onChange={pan => setTracks(prev => prev.map(t => t.id === track.id ? { ...t, pan } : t))}
-                      />
-                    </div>
-                    {track.instrument && <span className="track-instrument">{track.instrument}</span>}
-                  </div>
-                </div>
-                <div className="track-content" style={{ minHeight: '80px' }}>
-                  {track.clips.map((clip, idx) => {
-                    const clipWidth = clip.duration * PIXELS_PER_BEAT;
-                    const clipHeight = 68; // Track lane min-height (80) - top/bottom padding (12)
-
-                    // Calculate note range for this clip
-                    const notes = clip.notes || [];
-                    const minPitch = notes.length > 0 ? Math.min(...notes.map(n => n.pitch)) : 60;
-                    const maxPitch = notes.length > 0 ? Math.max(...notes.map(n => n.pitch)) : 72;
-                    const pitchRange = Math.max(12, maxPitch - minPitch + 1);
-
-                    return (
-                      <div key={idx} className="clip" style={{
-                        left: `${clip.start * PIXELS_PER_BEAT}px`,
-                        width: `${clipWidth}px`,
-                        backgroundColor: track.color + '25',
-                        borderColor: track.color
-                      }}>
-                        <span className="clip-name">{clip.name}</span>
-
-                        {/* MIDI Note Visualization */}
-                        {(track.type === 'midi' || track.type === 'drums') && notes.length > 0 && (
-                          <svg className="clip-notes" viewBox="0 0 100 100" preserveAspectRatio="none">
-                            {notes.map((note, noteIdx) => {
-                              // Use normalized 0-100 coordinates - notes touch top and bottom
-                              const x = (note.start / clip.duration) * 100;
-                              const w = Math.max(1, (note.duration / clip.duration) * 100);
-                              const y = ((maxPitch - note.pitch) / pitchRange) * 100;
-                              const h = (1 / pitchRange) * 100; // Full height per note
-                              return (
-                                <rect
-                                  key={noteIdx}
-                                  x={x}
-                                  y={y}
-                                  width={w - 0.5}
-                                  height={h}
-                                  rx={0.5}
-                                  fill={track.color}
-                                  opacity={0.9}
-                                />
-                              );
-                            })}
-                          </svg>
-                        )}
-
-                        {/* Audio Waveform Visualization */}
-                        {track.type === 'audio' && (
-                          <svg className="clip-waveform" viewBox="0 0 100 100" preserveAspectRatio="none">
-                            {Array.from({ length: 50 }).map((_, i) => {
-                              // Generate pseudo-random but consistent waveform
-                              const seed = (clip.name.charCodeAt(i % clip.name.length) + i) % 100;
-                              const h = 20 + (seed / 100) * 60;
-                              const y = (100 - h) / 2;
-                              return (
-                                <rect
-                                  key={i}
-                                  x={i * 2}
-                                  y={y}
-                                  width={1.5}
-                                  height={h}
-                                  rx={0.5}
-                                  fill={track.color}
-                                  opacity={0.6}
-                                />
-                              );
-                            })}
-                          </svg>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+              />
             ))}
             {/* Empty State / Add Track Area */}
             <div
@@ -1593,13 +1510,6 @@ export default function DAWPage() {
           transition: all 0.15s;
         }
         .color-swatch:hover { transform: scale(1.15); border-color: white; }
-
-        /* Drag states */
-        .track-lane.dragging { opacity: 0.5; background: rgba(88, 101, 242, 0.1); }
-        .track-lane.drop-target { 
-          border-top: 2px solid #5865f2; 
-          background: rgba(88, 101, 242, 0.08);
-        }
 
         /* Rename modal */
         .rename-modal { max-width: 320px; }
@@ -1953,113 +1863,6 @@ export default function DAWPage() {
         .empty-state-content small {
             font-size: 0.7rem;
             color: #444;
-        }
-        .track-lane {
-          display: flex;
-          height: 80px;
-          flex-shrink: 0;
-          border-bottom: 1px solid #0c0c12;
-          cursor: pointer;
-          transition: background 0.15s;
-        }
-        .track-lane:hover { background: rgba(255, 255, 255, 0.02); }
-        .track-lane.selected { background: rgba(88, 101, 242, 0.08); }
-        .track-lane.muted { opacity: 0.4; }
-        .track-lane.greyed { opacity: 0.35; filter: saturate(0.3); }
-        .track-header {
-          width: 170px;
-          display: flex;
-          align-items: center;
-          gap: 0.4rem;
-          padding: 0 0.6rem;
-          background: var(--bg-surface);
-          border-right: 1px solid var(--border-subtle);
-          flex-shrink: 0;
-        }
-        .track-color { width: 3px; height: 32px; border-radius: 2px; }
-        .track-info { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 2px; overflow: hidden; }
-        .track-name { display: block; font-size: 0.7rem; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .track-instrument { display: block; font-size: 0.5rem; color: #555; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-        .track-controls { display: flex; gap: 0.2rem; }
-        .track-btn {
-          width: 18px;
-          height: 18px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          background: var(--border-subtle);
-          border: none;
-          color: var(--text-dim);
-          font-size: 0.5rem;
-          font-weight: 700;
-          border-radius: 3px;
-          cursor: pointer;
-        }
-        .track-btn:hover { color: white; }
-        .track-btn.active { background: #ff4d4d; color: white; }
-        .track-btn.active.solo { background: #fee75c; color: #000; }
-        .volume-meter-container {
-          position: relative;
-          width: 60px;
-          height: 10px;
-        }
-        .volume-meter-bg {
-          position: absolute;
-          top: 3px;
-          left: 0;
-          right: 0;
-          height: 4px;
-          background: var(--border-subtle);
-          border-radius: 2px;
-          overflow: hidden;
-        }
-        .volume-meter-fill {
-          height: 100%;
-          background: linear-gradient(90deg, #57f287, #fee75c, #ed4245);
-          opacity: 0.6;
-          transition: width 0.1s;
-        }
-        .mini-vol {
-          -webkit-appearance: none;
-          position: absolute;
-          top: 0;
-          left: 0;
-          width: 60px;
-          height: 10px;
-          background: transparent;
-          outline: none;
-          cursor: pointer;
-        }
-        .mini-vol::-webkit-slider-thumb {
-          -webkit-appearance: none;
-          width: 6px;
-          height: 10px;
-          border-radius: 2px;
-          background: #fff;
-          cursor: pointer;
-          box-shadow: 0 1px 3px rgba(0,0,0,0.4);
-        }
-        .mini-vol::-webkit-slider-thumb:hover { background: #5865f2; }
-        .track-content { flex: 1; position: relative; }
-        .clip {
-          position: absolute;
-          top: 6px;
-          bottom: 6px;
-          border-radius: 4px;
-          border-left: 3px solid;
-          cursor: pointer;
-        }
-        .clip:hover { filter: brightness(1.15); }
-        .clip-name { position: absolute; top: 3px; left: 6px; font-size: 0.5rem; color: rgba(255, 255, 255, 0.8); font-weight: 600; z-index: 1; text-shadow: 0 1px 2px rgba(0,0,0,0.5); }
-        .clip-notes, .clip-waveform { 
-          position: absolute; 
-          top: 14px; 
-          left: 3px; 
-          right: 3px; 
-          bottom: 3px; 
-          width: calc(100% - 6px);
-          height: calc(100% - 17px);
-          overflow: hidden;
         }
 
 
